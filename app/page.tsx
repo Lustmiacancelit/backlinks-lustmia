@@ -25,6 +25,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   ExternalLink,
+  Zap,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -34,6 +35,8 @@ type BacklinkResult = {
   refDomains: number;
   sample: string[];
 };
+
+type Mode = "mvp" | "pro";
 
 const mockTrend = [
   { day: "Mon", links: 12 },
@@ -56,6 +59,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacklinkResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("mvp");
 
   async function quickScan(e: React.FormEvent) {
     e.preventDefault();
@@ -69,21 +73,19 @@ export default function Dashboard() {
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: cleanedUrl }),
+        body: JSON.stringify({ url: cleanedUrl, mode }),
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // Friendly 403 messaging (protected sites)
         if (res.status === 403 || String(data?.error || "").includes("403")) {
           setError(
             "Protected site detected. This domain blocks automated crawlers (403). " +
-              "Try another site or use Pro scan with verified crawl sources."
+              "Try Pro Scan or another site."
           );
           return;
         }
-
         throw new Error(data?.error || "Scan failed.");
       }
 
@@ -98,7 +100,7 @@ export default function Dashboard() {
   const kpis = useMemo(() => {
     const links = result?.totalBacklinks ?? 0;
     const ref = result?.refDomains ?? 0;
-    const toxic = Math.max(0, Math.round(links * 0.06)); // placeholder until toxic scoring
+    const toxic = Math.max(0, Math.round(links * 0.06)); 
     const growth = links === 0 ? 0 : Math.round((links / Math.max(1, ref)) * 8);
     return { links, ref, toxic, growth };
   }, [result]);
@@ -185,7 +187,7 @@ export default function Dashboard() {
                   Quick Scan
                 </div>
                 <div className="text-xs text-white/60">
-                  MVP v1 — visible outbound links
+                  {mode === "pro" ? "Pro Scan — bypass protected sites" : "MVP v1 — visible outbound links"}
                 </div>
               </div>
 
@@ -198,11 +200,31 @@ export default function Dashboard() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                 />
+
+                {/* MVP Scan button */}
                 <button
+                  type="button"
+                  onClick={() => setMode("mvp")}
                   disabled={loading}
-                  className="px-5 py-3 rounded-xl font-semibold bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90 disabled:opacity-60"
+                  className={clsx(
+                    "px-4 py-3 rounded-xl font-semibold border text-sm",
+                    mode === "mvp"
+                      ? "bg-white/10 border-white/20"
+                      : "bg-white/5 border-white/10 hover:bg-white/10"
+                  )}
                 >
-                  {loading ? "Scanning..." : "Scan"}
+                  Scan
+                </button>
+
+                {/* Pro Scan button */}
+                <button
+                  type="submit"
+                  onClick={() => setMode("pro")}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-5 py-3 rounded-xl font-semibold bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90 disabled:opacity-60"
+                >
+                  <Zap className="h-4 w-4" />
+                  {loading && mode === "pro" ? "Pro Scanning..." : "Pro Scan"}
                 </button>
               </form>
 
@@ -258,31 +280,10 @@ export default function Dashboard() {
 
           {/* KPIs */}
           <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <KPI
-              icon={<Link2 className="h-5 w-5 text-pink-300" />}
-              label="Total Backlinks"
-              value={kpis.links}
-              delta="+12%"
-            />
-            <KPI
-              icon={<Globe className="h-5 w-5 text-indigo-300" />}
-              label="Referring Domains"
-              value={kpis.ref}
-              delta="+5%"
-            />
-            <KPI
-              icon={<ShieldAlert className="h-5 w-5 text-red-300" />}
-              label="Toxic Links"
-              value={kpis.toxic}
-              delta="-2%"
-              negative
-            />
-            <KPI
-              icon={<TrendingUp className="h-5 w-5 text-cyan-300" />}
-              label="Growth Score"
-              value={kpis.growth}
-              delta="+9%"
-            />
+            <KPI icon={<Link2 className="h-5 w-5 text-pink-300" />} label="Total Backlinks" value={kpis.links} delta="+12%" />
+            <KPI icon={<Globe className="h-5 w-5 text-indigo-300" />} label="Referring Domains" value={kpis.ref} delta="+5%" />
+            <KPI icon={<ShieldAlert className="h-5 w-5 text-red-300" />} label="Toxic Links" value={kpis.toxic} delta="-2%" negative />
+            <KPI icon={<TrendingUp className="h-5 w-5 text-cyan-300" />} label="Growth Score" value={kpis.growth} delta="+9%" />
           </section>
 
           {/* CHART + TABLE */}
@@ -313,13 +314,7 @@ export default function Dashboard() {
                         borderRadius: 12,
                       }}
                     />
-                    <Area
-                      type="monotone"
-                      dataKey="links"
-                      stroke="rgb(236,72,153)"
-                      fill="url(#linksGradient)"
-                      strokeWidth={2}
-                    />
+                    <Area type="monotone" dataKey="links" stroke="rgb(236,72,153)" fill="url(#linksGradient)" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -331,10 +326,7 @@ export default function Dashboard() {
 
               <div className="space-y-2">
                 {mockScans.map((s) => (
-                  <div
-                    key={s.domain}
-                    className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between"
-                  >
+                  <div key={s.domain} className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
                     <div>
                       <div className="text-sm font-semibold">{s.domain}</div>
                       <div className="text-xs text-white/60">
@@ -349,11 +341,7 @@ export default function Dashboard() {
                           s.change >= 0 ? "text-emerald-300" : "text-red-300"
                         )}
                       >
-                        {s.change >= 0 ? (
-                          <ArrowUpRight className="h-4 w-4" />
-                        ) : (
-                          <ArrowDownRight className="h-4 w-4" />
-                        )}
+                        {s.change >= 0 ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
                         {Math.abs(s.change)}
                       </div>
                       <div className="text-xs text-white/50">{s.time}</div>
