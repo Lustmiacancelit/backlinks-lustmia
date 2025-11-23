@@ -1,31 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
+  AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import {
-  Search,
-  Link2,
-  Activity,
-  ShieldAlert,
-  TrendingUp,
-  Globe,
-  BarChart3,
-  Settings,
-  CreditCard,
-  Users,
-  Sparkles,
-  ArrowUpRight,
-  ArrowDownRight,
-  ExternalLink,
-  Zap,
+  Search, Link2, Activity, ShieldAlert, TrendingUp, Globe,
+  BarChart3, Settings, CreditCard, Users, Sparkles,
+  ArrowUpRight, ArrowDownRight, ExternalLink, Zap,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -37,6 +20,12 @@ type BacklinkResult = {
 };
 
 type Mode = "mvp" | "pro";
+
+type Quota = {
+  used: number;
+  limit: number;
+  resetAt: number;
+};
 
 const mockTrend = [
   { day: "Mon", links: 12 },
@@ -54,12 +43,61 @@ const mockScans = [
   { domain: "competitor.io", links: 201, ref: 64, change: +12, time: "2 days ago" },
 ];
 
+function getOrCreateUserId() {
+  if (typeof window === "undefined") return "anon";
+  const key = "lustmia_proscan_userid";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacklinkResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("mvp");
+
+  const [userId, setUserId] = useState("anon");
+  const [quota, setQuota] = useState<Quota | null>(null);
+  const remaining = quota ? Math.max(0, quota.limit - quota.used) : 0;
+
+  // Load userId + quota
+  useEffect(() => {
+    const id = getOrCreateUserId();
+    setUserId(id);
+
+    fetch(`/api/proscan/quota?userId=${id}`)
+      .then(r => r.json())
+      .then(d => setQuota(d.quota))
+      .catch(() => {});
+  }, []);
+
+  async function consumeProScanIfNeeded() {
+    if (mode !== "pro") return true;
+
+    const r = await fetch("/api/proscan/quota", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, action: "consume" }),
+    });
+
+    const d = await r.json().catch(() => ({}));
+
+    if (!r.ok && d?.blocked) {
+      setQuota(d.quota);
+      setError(
+        "Pro Scan limit reached for this month. Upgrade to get more Pro Scans."
+      );
+      return false;
+    }
+
+    if (d?.quota) setQuota(d.quota);
+    return true;
+  }
 
   async function quickScan(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +108,10 @@ export default function Dashboard() {
     const cleanedUrl = url.trim();
 
     try {
+      // If Pro Scan, consume quota first
+      const allowed = await consumeProScanIfNeeded();
+      if (!allowed) return;
+
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +124,7 @@ export default function Dashboard() {
         if (res.status === 403 || String(data?.error || "").includes("403")) {
           setError(
             "Protected site detected. This domain blocks automated crawlers (403). " +
-              "Try Pro Scan or another site."
+            "Try Pro Scan or another site."
           );
           return;
         }
@@ -100,7 +142,7 @@ export default function Dashboard() {
   const kpis = useMemo(() => {
     const links = result?.totalBacklinks ?? 0;
     const ref = result?.refDomains ?? 0;
-    const toxic = Math.max(0, Math.round(links * 0.06)); 
+    const toxic = Math.max(0, Math.round(links * 0.06));
     const growth = links === 0 ? 0 : Math.round((links / Math.max(1, ref)) * 8);
     return { links, ref, toxic, growth };
   }, [result]);
@@ -186,8 +228,17 @@ export default function Dashboard() {
                   <Search className="h-4 w-4 text-pink-400" />
                   Quick Scan
                 </div>
-                <div className="text-xs text-white/60">
-                  {mode === "pro" ? "Pro Scan — bypass protected sites" : "MVP v1 — visible outbound links"}
+
+                <div className="text-xs text-white/60 flex items-center gap-3">
+                  <span>
+                    {mode === "pro"
+                      ? "Pro Scan — bypass protected sites"
+                      : "MVP v1 — visible outbound links"}
+                  </span>
+
+                  <span className="px-2 py-1 rounded-lg bg-white/5 border border-white/10">
+                    Pro scans left: <b>{remaining}</b>
+                  </span>
                 </div>
               </div>
 
@@ -220,8 +271,13 @@ export default function Dashboard() {
                 <button
                   type="submit"
                   onClick={() => setMode("pro")}
-                  disabled={loading}
-                  className="flex items-center gap-2 px-5 py-3 rounded-xl font-semibold bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90 disabled:opacity-60"
+                  disabled={loading || remaining <= 0}
+                  className={clsx(
+                    "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
+                    remaining <= 0
+                      ? "bg-white/5 border border-white/10 text-white/40 cursor-not-allowed"
+                      : "bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90"
+                  )}
                 >
                   <Zap className="h-4 w-4" />
                   {loading && mode === "pro" ? "Pro Scanning..." : "Pro Scan"}
