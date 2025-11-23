@@ -63,17 +63,33 @@ export default function Dashboard() {
     setError(null);
     setResult(null);
 
+    const cleanedUrl = url.trim();
+
     try {
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: cleanedUrl }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Scan failed.");
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        // Friendly 403 messaging (protected sites)
+        if (res.status === 403 || String(data?.error || "").includes("403")) {
+          setError(
+            "Protected site detected. This domain blocks automated crawlers (403). " +
+              "Try another site or use Pro scan with verified crawl sources."
+          );
+          return;
+        }
+
+        throw new Error(data?.error || "Scan failed.");
+      }
+
       setResult(data);
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || "Scan failed.");
     } finally {
       setLoading(false);
     }
