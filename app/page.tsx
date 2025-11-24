@@ -76,8 +76,9 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
-  async function consumeProScanIfNeeded() {
-    if (mode !== "pro") return true;
+  // ⭐ CHANGED: accept scanMode so we don't depend on async setState
+  async function consumeProScanIfNeeded(scanMode: Mode) {
+    if (scanMode !== "pro") return true;
 
     const r = await fetch("/api/proscan/quota", {
       method: "POST",
@@ -99,8 +100,12 @@ export default function Dashboard() {
     return true;
   }
 
-  async function quickScan(e: React.FormEvent) {
-    e.preventDefault();
+  // ⭐ CHANGED: allow forcedMode OR form-submit mode
+  async function quickScan(e?: React.FormEvent, forcedMode?: Mode) {
+    if (e) e.preventDefault();
+
+    const effectiveMode: Mode = forcedMode ?? mode; // ⭐ CHANGED
+
     setLoading(true);
     setError(null);
     setResult(null);
@@ -109,13 +114,13 @@ export default function Dashboard() {
 
     try {
       // If Pro Scan, consume quota first
-      const allowed = await consumeProScanIfNeeded();
+      const allowed = await consumeProScanIfNeeded(effectiveMode); // ⭐ CHANGED
       if (!allowed) return;
 
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: cleanedUrl, mode }),
+        body: JSON.stringify({ url: cleanedUrl, mode: effectiveMode }), // ⭐ CHANGED
       });
 
       const data = await res.json().catch(() => ({}));
@@ -132,11 +137,18 @@ export default function Dashboard() {
       }
 
       setResult(data);
+      setMode(effectiveMode); // ⭐ CHANGED: keep UI aligned after scan
     } catch (err: any) {
       setError(err?.message || "Scan failed.");
     } finally {
       setLoading(false);
     }
+  }
+
+  // ⭐ CHANGED: helper that runs scan with a specific mode
+  async function runScan(scanMode: Mode) {
+    setMode(scanMode);
+    await quickScan(undefined, scanMode);
   }
 
   const kpis = useMemo(() => {
@@ -242,7 +254,8 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <form onSubmit={quickScan} className="flex flex-col md:flex-row gap-2">
+              {/* form still works via Enter key */}
+              <form onSubmit={(e) => quickScan(e)} className="flex flex-col md:flex-row gap-2">
                 <input
                   type="url"
                   required
@@ -255,7 +268,7 @@ export default function Dashboard() {
                 {/* MVP Scan button */}
                 <button
                   type="button"
-                  onClick={() => setMode("mvp")}
+                  onClick={() => runScan("mvp")} // ⭐ CHANGED
                   disabled={loading}
                   className={clsx(
                     "px-4 py-3 rounded-xl font-semibold border text-sm",
@@ -264,13 +277,13 @@ export default function Dashboard() {
                       : "bg-white/5 border-white/10 hover:bg-white/10"
                   )}
                 >
-                  Scan
+                  {loading && mode === "mvp" ? "Scanning..." : "Scan"} {/* ⭐ CHANGED label */}
                 </button>
 
                 {/* Pro Scan button */}
                 <button
-                  type="submit"
-                  onClick={() => setMode("pro")}
+                  type="button" // ⭐ CHANGED
+                  onClick={() => runScan("pro")} // ⭐ CHANGED
                   disabled={loading || remaining <= 0}
                   className={clsx(
                     "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
