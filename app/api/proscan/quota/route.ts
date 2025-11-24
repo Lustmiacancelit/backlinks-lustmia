@@ -3,12 +3,19 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+// Demo user (falmeida)
+const DEMO_USER_ID = "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
+
 function getSupabaseAdmin() {
-  // Fallback so you don’t get trapped by naming mismatches
+  // Prefer server env, fallback to NEXT_PUBLIC for safety
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  // Prefer correct service role key name, fallback to older one if present
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY; // fallback if old name exists
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE;
 
   if (!url || !key) {
     throw new Error(
@@ -16,32 +23,28 @@ function getSupabaseAdmin() {
     );
   }
 
-  return createClient(url, key);
+  return createClient(url, key, {
+    auth: { persistSession: false },
+  });
 }
 
 export async function GET(req: Request) {
   try {
     const supabase = getSupabaseAdmin();
-
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("u");
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Missing user id (?u=...)" },
-        { status: 400 }
-      );
-    }
+    // If no user ID is passed, use demo user falmeida
+    let userId = searchParams.get("u") || DEMO_USER_ID;
 
     const limit = Number(process.env.PROSCAN_DAILY_LIMIT || 3);
 
-    // Defaults so quota works even if tables are empty
+    // Defaults
     let usedToday = 0;
     let plan = "free";
     let status = "inactive";
 
     // -----------------------------
-    // 1) Subscription check
+    // 1) Read subscription (if exists)
     // -----------------------------
     try {
       const { data: sub } = await supabase
@@ -55,11 +58,11 @@ export async function GET(req: Request) {
         status = sub.status || status;
       }
     } catch {
-      // If table doesn't exist yet, ignore
+      // ignore missing table / schema mismatch
     }
 
     // -----------------------------
-    // 2) Usage check
+    // 2) Read usage today (if exists)
     // -----------------------------
     let resetAtISO: string | null = null;
 
@@ -78,7 +81,6 @@ export async function GET(req: Request) {
       if (usage) {
         const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
 
-        // If reset_at is still in the future, count usage; otherwise reset to 0
         if (resetAtDb && resetAtDb > now) {
           usedToday = usage.used_today || 0;
         } else {
@@ -86,7 +88,7 @@ export async function GET(req: Request) {
         }
       }
 
-      // Ensure row exists (safe upsert)
+      // Ensure row exists / stays correct
       await supabase.from("proscan_usage").upsert({
         user_id: userId,
         used_today: usedToday,
@@ -94,7 +96,7 @@ export async function GET(req: Request) {
         reset_at: resetAtISO,
       });
     } catch {
-      // If usage table doesn't exist yet, ignore
+      // ignore missing usage table
     }
 
     const remaining = Math.max(limit - usedToday, 0);
@@ -108,10 +110,11 @@ export async function GET(req: Request) {
       remaining,
       resetAt: resetAtISO,
       isPro: status === "active",
+      demoUser: userId === DEMO_USER_ID,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: e.message || "Quota check failed" },
+      { error: e?.message || "Quota check failed" },
       { status: 500 }
     );
   }
