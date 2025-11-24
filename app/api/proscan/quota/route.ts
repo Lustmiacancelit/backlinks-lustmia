@@ -1,87 +1,120 @@
-import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
+// app/api/proscan/quota/route.ts
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
-type QuotaRecord = {
-  used: number;
-  limit: number;
-  resetAt: number; // timestamp (ms)
-};
-
-// VERY LIGHT MVP STORE (in-memory). Replace with Supabase later.
-const store = new Map<string, QuotaRecord>();
-
-const PRO_LIMIT_FREE = 5; // free tier pro scans per month
-
-function monthResetTimestamp() {
+function getTodayUTC(): string {
   const now = new Date();
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  return nextMonth.getTime();
+  // YYYY-MM-DD in UTC
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+    .toISOString()
+    .slice(0, 10);
 }
 
-function getOrCreate(userId: string): QuotaRecord {
-  const existing = store.get(userId);
-  const now = Date.now();
-
-  if (existing && existing.resetAt > now) return existing;
-
-  const fresh: QuotaRecord = {
-    used: 0,
-    limit: PRO_LIMIT_FREE,
-    resetAt: monthResetTimestamp(),
-  };
-  store.set(userId, fresh);
-  return fresh;
-}
-
-export async function POST(req: NextRequest) {
+export async function GET(req: Request) {
   try {
-    const { userId, action } = await req.json();
+    const url = new URL(req.url);
+    const userId = url.searchParams.get("userId");
 
     if (!userId) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    const rec = getOrCreate(userId);
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const serviceKey = process.env.SUPABASE_SERVICE_KEY!;
+    const defaultLimit = Number(process.env.PROSCAN_DAILY_LIMIT || 3);
 
-    if (action === "consume") {
-      if (rec.used >= rec.limit) {
-        return NextResponse.json(
-          {
-            ok: false,
-            blocked: true,
-            message: "Pro Scan quota exceeded",
-            quota: rec,
-          },
-          { status: 402 }
-        );
-      }
-      rec.used += 1;
-      store.set(userId, rec);
+    if (!supabaseUrl || !serviceKey) {
+      return NextResponse.json(
+        { error: "Supabase env vars missing" },
+        { status: 500 }
+      );
     }
 
+    const supabase = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
+
+    const today = getTodayUTC();
+
+    // Read existing usage row
+    const { data: row, error: readErr } = await supabase
+      .from("proscan_usage")
+      .select("user_id, used, limit, period_start")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    // If no row, create one
+    if (readErr) {
+      return NextResponse.json({ error: readErr.message }, { status: 500 });
+    }
+
+    if (!row) {
+      const { data: inserted, error: insErr } = await supabase
+        .from("proscan_usage")
+        .insert({
+          user_id: userId,
+          used: 0,
+          limit: defaultLimit,
+          period_start: today,
+        })
+        .select("user_id, used, limit, period_start")
+        .single();
+
+      if (insErr) {
+        return NextResponse.json({ error: insErr.message }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        userId: inserted.user_id,
+        used: inserted.used,
+        limit: inserted.limit,
+        remaining: Math.max(0, inserted.limit - inserted.used),
+        period_start: inserted.period_start,
+        reset_at: today,
+      });
+    }
+
+    // Reset if period_start is not today
+    if (row.period_start !== today) {
+      const { data: resetRow, error: resetErr } = await supabase
+        .from("proscan_usage")
+        .update({
+          used: 0,
+          period_start: today,
+          limit: row.limit ?? defaultLimit,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId)
+        .select("user_id, used, limit, period_start")
+        .single();
+
+      if (resetErr) {
+        return NextResponse.json({ error: resetErr.message }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        userId: resetRow.user_id,
+        used: resetRow.used,
+        limit: resetRow.limit,
+        remaining: Math.max(0, resetRow.limit - resetRow.used),
+        period_start: resetRow.period_start,
+        reset_at: today,
+      });
+    }
+
+    // Normal return
     return NextResponse.json({
-      ok: true,
-      quota: rec,
-      remaining: Math.max(0, rec.limit - rec.used),
+      userId: row.user_id,
+      used: row.used ?? 0,
+      limit: row.limit ?? defaultLimit,
+      remaining: Math.max(0, (row.limit ?? defaultLimit) - (row.used ?? 0)),
+      period_start: row.period_start,
+      reset_at: today,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "Quota check failed" },
+      { error: e?.message || "Quota endpoint failed" },
       { status: 500 }
     );
   }
-}
-
-// Optional GET for quick visibility
-export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId") || "";
-  if (!userId) {
-    return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-  }
-  const rec = getOrCreate(userId);
-  return NextResponse.json({
-    ok: true,
-    quota: rec,
-    remaining: Math.max(0, rec.limit - rec.used),
-  });
 }
