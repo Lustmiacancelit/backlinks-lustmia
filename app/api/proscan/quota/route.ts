@@ -4,12 +4,18 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 
 function getSupabaseAdmin() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Fallback so you don’t get trapped by naming mismatches
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY; // fallback if old name exists
 
   if (!url || !key) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    throw new Error(
+      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY"
+    );
   }
+
   return createClient(url, key);
 }
 
@@ -22,19 +28,21 @@ export async function GET(req: Request) {
 
     if (!userId) {
       return NextResponse.json(
-        { error: "Missing user id" },
+        { error: "Missing user id (?u=...)" },
         { status: 400 }
       );
     }
 
     const limit = Number(process.env.PROSCAN_DAILY_LIMIT || 3);
 
-    // Default quota response (works even if tables aren't ready)
+    // Defaults so quota works even if tables are empty
     let usedToday = 0;
     let plan = "free";
     let status = "inactive";
 
-    // 1) Check subscription (if table exists)
+    // -----------------------------
+    // 1) Subscription check
+    // -----------------------------
     try {
       const { data: sub } = await supabase
         .from("proscan_subscriptions")
@@ -47,14 +55,17 @@ export async function GET(req: Request) {
         status = sub.status || status;
       }
     } catch {
-      // ignore if table doesn't exist yet
+      // If table doesn't exist yet, ignore
     }
 
-    // 2) Check usage today (if table exists)
+    // -----------------------------
+    // 2) Usage check
+    // -----------------------------
     let resetAtISO: string | null = null;
+
     try {
-      const today = new Date();
-      const resetAt = new Date(today);
+      const now = new Date();
+      const resetAt = new Date(now);
       resetAt.setUTCHours(24, 0, 0, 0);
       resetAtISO = resetAt.toISOString();
 
@@ -67,15 +78,15 @@ export async function GET(req: Request) {
       if (usage) {
         const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
 
-        // If reset_at is still in the future, count usage. Otherwise reset to 0.
-        if (resetAtDb && resetAtDb > today) {
+        // If reset_at is still in the future, count usage; otherwise reset to 0
+        if (resetAtDb && resetAtDb > now) {
           usedToday = usage.used_today || 0;
         } else {
           usedToday = 0;
         }
       }
 
-      // Ensure row exists (optional, safe)
+      // Ensure row exists (safe upsert)
       await supabase.from("proscan_usage").upsert({
         user_id: userId,
         used_today: usedToday,
@@ -83,7 +94,7 @@ export async function GET(req: Request) {
         reset_at: resetAtISO,
       });
     } catch {
-      // ignore if usage table doesn't exist yet
+      // If usage table doesn't exist yet, ignore
     }
 
     const remaining = Math.max(limit - usedToday, 0);
