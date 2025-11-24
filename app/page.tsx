@@ -21,11 +21,63 @@ type BacklinkResult = {
 
 type Mode = "mvp" | "pro";
 
+/**
+ * Backend /api/proscan/quota returns top-level:
+ * { limit, usedToday, remaining, resetAt, isPro, plan, status, demoUser }
+ * We support that AND older shapes just in case.
+ */
 type Quota = {
-  used: number;
+  usedToday: number;
   limit: number;
-  resetAt: number;
+  remaining: number;
+  resetAt: string | null;
+  isPro?: boolean;
+  plan?: string;
+  status?: string;
+  demoUser?: boolean;
 };
+
+// Normalize any quota shape to our Quota type
+function normalizeQuota(d: any): Quota | null {
+  if (!d) return null;
+
+  // If some older route wraps as {quota:{...}}
+  if (d.quota) d = d.quota;
+
+  // New shape from backend
+  if (typeof d.remaining === "number" || typeof d.usedToday === "number") {
+    const limit = Number(d.limit || 0);
+    const usedToday = Number(d.usedToday || 0);
+    const remaining = typeof d.remaining === "number"
+      ? d.remaining
+      : Math.max(0, limit - usedToday);
+
+    return {
+      usedToday,
+      limit,
+      remaining,
+      resetAt: d.resetAt ?? null,
+      isPro: d.isPro,
+      plan: d.plan,
+      status: d.status,
+      demoUser: d.demoUser,
+    };
+  }
+
+  // Very old shape: {used, limit, resetAt}
+  if (typeof d.used === "number") {
+    const limit = Number(d.limit || 0);
+    const usedToday = Number(d.used || 0);
+    return {
+      usedToday,
+      limit,
+      remaining: Math.max(0, limit - usedToday),
+      resetAt: d.resetAt ? new Date(d.resetAt).toISOString() : null,
+    };
+  }
+
+  return null;
+}
 
 const mockTrend = [
   { day: "Mon", links: 12 },
@@ -63,48 +115,55 @@ export default function Dashboard() {
 
   const [userId, setUserId] = useState("anon");
   const [quota, setQuota] = useState<Quota | null>(null);
-  const remaining = quota ? Math.max(0, quota.limit - quota.used) : 0;
+
+  // ✅ Use backend-provided remaining
+  const remaining = quota?.remaining ?? 0;
 
   // Load userId + quota
   useEffect(() => {
     const id = getOrCreateUserId();
     setUserId(id);
 
-    fetch(`/api/proscan/quota?userId=${id}`)
+    // ✅ Backend expects ?u= not ?userId=
+    fetch(`/api/proscan/quota?u=${id}`)
       .then(r => r.json())
-      .then(d => setQuota(d.quota))
+      .then(d => {
+        const q = normalizeQuota(d);
+        if (q) setQuota(q);
+      })
       .catch(() => {});
   }, []);
 
-  // ⭐ CHANGED: accept scanMode so we don't depend on async setState
+  // ✅ Pro Scan gating using GET quota (no POST consume route exists)
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
 
-    const r = await fetch("/api/proscan/quota", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, action: "consume" }),
-    });
-
+    const r = await fetch(`/api/proscan/quota?u=${userId}`);
     const d = await r.json().catch(() => ({}));
+    const q = normalizeQuota(d);
 
-    if (!r.ok && d?.blocked) {
-      setQuota(d.quota);
+    if (q) setQuota(q);
+
+    if (!r.ok) {
+      setError(d?.error || "Unable to check Pro Scan quota.");
+      return false;
+    }
+
+    if ((q?.remaining ?? 0) <= 0) {
       setError(
         "Pro Scan limit reached for this month. Upgrade to get more Pro Scans."
       );
       return false;
     }
 
-    if (d?.quota) setQuota(d.quota);
     return true;
   }
 
-  // ⭐ CHANGED: allow forcedMode OR form-submit mode
+  // allow forcedMode OR form-submit mode
   async function quickScan(e?: React.FormEvent, forcedMode?: Mode) {
     if (e) e.preventDefault();
 
-    const effectiveMode: Mode = forcedMode ?? mode; // ⭐ CHANGED
+    const effectiveMode: Mode = forcedMode ?? mode;
 
     setLoading(true);
     setError(null);
@@ -113,14 +172,14 @@ export default function Dashboard() {
     const cleanedUrl = url.trim();
 
     try {
-      // If Pro Scan, consume quota first
-      const allowed = await consumeProScanIfNeeded(effectiveMode); // ⭐ CHANGED
+      // If Pro Scan, check quota first
+      const allowed = await consumeProScanIfNeeded(effectiveMode);
       if (!allowed) return;
 
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: cleanedUrl, mode: effectiveMode }), // ⭐ CHANGED
+        body: JSON.stringify({ url: cleanedUrl, mode: effectiveMode }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -137,7 +196,18 @@ export default function Dashboard() {
       }
 
       setResult(data);
-      setMode(effectiveMode); // ⭐ CHANGED: keep UI aligned after scan
+      setMode(effectiveMode);
+
+      // ✅ Refresh quota after a successful Pro Scan so button count updates
+      if (effectiveMode === "pro") {
+        fetch(`/api/proscan/quota?u=${userId}`)
+          .then(r => r.json())
+          .then(d => {
+            const q = normalizeQuota(d);
+            if (q) setQuota(q);
+          })
+          .catch(() => {});
+      }
     } catch (err: any) {
       setError(err?.message || "Scan failed.");
     } finally {
@@ -145,7 +215,7 @@ export default function Dashboard() {
     }
   }
 
-  // ⭐ CHANGED: helper that runs scan with a specific mode
+  // helper that runs scan with a specific mode
   async function runScan(scanMode: Mode) {
     setMode(scanMode);
     await quickScan(undefined, scanMode);
@@ -268,7 +338,7 @@ export default function Dashboard() {
                 {/* MVP Scan button */}
                 <button
                   type="button"
-                  onClick={() => runScan("mvp")} // ⭐ CHANGED
+                  onClick={() => runScan("mvp")}
                   disabled={loading}
                   className={clsx(
                     "px-4 py-3 rounded-xl font-semibold border text-sm",
@@ -277,13 +347,13 @@ export default function Dashboard() {
                       : "bg-white/5 border-white/10 hover:bg-white/10"
                   )}
                 >
-                  {loading && mode === "mvp" ? "Scanning..." : "Scan"} {/* ⭐ CHANGED label */}
+                  {loading && mode === "mvp" ? "Scanning..." : "Scan"}
                 </button>
 
                 {/* Pro Scan button */}
                 <button
-                  type="button" // ⭐ CHANGED
-                  onClick={() => runScan("pro")} // ⭐ CHANGED
+                  type="button"
+                  onClick={() => runScan("pro")}
                   disabled={loading || remaining <= 0}
                   className={clsx(
                     "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
