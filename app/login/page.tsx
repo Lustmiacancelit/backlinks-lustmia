@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/browser";
 import { ArrowRight, Link2, Sparkles } from "lucide-react";
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") || "/dashboard";
@@ -20,26 +20,15 @@ export default function LoginPage() {
   async function onLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      setError("Please enter a valid email.");
-      return;
-    }
-
     setLoading(true);
 
-    // ✅ Always force Supabase to come back through our callback
-    // and preserve the "next" destination.
     const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
       next
     )}`;
 
     const { error } = await supabase.auth.signInWithOtp({
-      email: cleanEmail,
-      options: {
-        emailRedirectTo: redirectTo,
-      },
+      email,
+      options: { emailRedirectTo: redirectTo },
     });
 
     setLoading(false);
@@ -54,7 +43,7 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-black text-white relative overflow-hidden flex items-center justify-center p-6">
-      {/* dib.io style glows */}
+      {/* background glows */}
       <div className="absolute w-[520px] h-[520px] bg-fuchsia-600/30 blur-3xl rounded-full -top-40 -left-40" />
       <div className="absolute w-[560px] h-[560px] bg-indigo-600/20 blur-3xl rounded-full top-0 -right-52" />
 
@@ -88,20 +77,17 @@ export default function LoginPage() {
               <input
                 type="email"
                 required
-                autoFocus
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 outline-none placeholder:text-white/35"
               />
 
-              {error && (
-                <div className="text-red-300 text-sm">{error}</div>
-              )}
+              {error && <div className="text-red-300 text-sm">{error}</div>}
 
               <button
                 type="submit"
-                disabled={loading || !email.trim()}
+                disabled={loading}
                 className="w-full py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2"
               >
                 {loading ? "Sending…" : "Send magic link"}
@@ -118,7 +104,6 @@ export default function LoginPage() {
           >
             Create account
           </button>
-
           <button
             onClick={() => router.push("/")}
             className="w-full py-2.5 rounded-xl text-white/70 hover:text-white text-sm"
@@ -128,5 +113,19 @@ export default function LoginPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-black text-white flex items-center justify-center">
+          <div className="text-white/60 text-sm">Loading login…</div>
+        </main>
+      }
+    >
+      <LoginInner />
+    </Suspense>
   );
 }
