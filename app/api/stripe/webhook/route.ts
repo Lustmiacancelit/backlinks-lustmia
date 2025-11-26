@@ -13,7 +13,7 @@ function getSupabaseAdmin() {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
 
-  return createClient(url, key);
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 /** Create Stripe client only at runtime (NOT build time) */
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
     if (!webhookSecret) throw new Error("Missing STRIPE_WEBHOOK_SECRET");
 
-    // Stripe needs the RAW body for signature verification
+    // Stripe needs RAW body for signature verification
     const rawBody = await req.text();
     const sig = req.headers.get("stripe-signature");
     if (!sig) {
@@ -67,38 +67,96 @@ export async function POST(req: Request) {
       return null;
     }
 
+    // Helper to update profiles gating fields
+    async function updateProfileById(
+      userId: string,
+      updates: Record<string, any>
+    ) {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq("id", userId);
+
+      if (error) console.error("profiles update error:", error);
+    }
+
+    async function updateProfileByEmail(
+      email: string,
+      updates: Record<string, any>
+    ) {
+      const { data: prof, error: profErr } = await supabaseAdmin
+        .from("profiles")
+        .select("id")
+        .eq("email", email.toLowerCase())
+        .single();
+
+      if (profErr || !prof?.id) {
+        console.warn("No profile found for email:", email, profErr);
+        return;
+      }
+
+      await updateProfileById(prof.id, updates);
+    }
+
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
 
         const userId = session.metadata?.userId || null;
-        const plan = session.metadata?.plan || "pro";
+        const plan =
+          session.metadata?.plan || "business"; // personal|business|agency
+        const email =
+          session.metadata?.email || session.customer_email || null;
 
         const stripeCustomerId =
           typeof session.customer === "string" ? session.customer : null;
 
         const stripeSubscriptionId =
-          typeof session.subscription === "string" ? session.subscription : null;
+          typeof session.subscription === "string"
+            ? session.subscription
+            : null;
 
         if (stripeSubscriptionId) {
-          const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+          const sub = await stripe.subscriptions.retrieve(
+            stripeSubscriptionId
+          );
 
+          const currentPeriodEnd = sub.current_period_end
+            ? new Date(sub.current_period_end * 1000).toISOString()
+            : null;
+
+          // 1) keep your subscriptions table updated
           const upsertPayload = {
             user_id: userId,
             plan,
             status: sub.status,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: sub.id,
-            current_period_end: sub.current_period_end
-              ? new Date(sub.current_period_end * 1000).toISOString()
-              : null,
+            current_period_end: currentPeriodEnd,
             cancel_at_period_end: sub.cancel_at_period_end ?? false,
             updated_at: new Date().toISOString(),
           };
 
           const resp = await upsertSubscription(upsertPayload);
           if (resp) return resp;
+
+          // 2) update profiles so middleware unlocks
+          const profileUpdates = {
+            subscription_status:
+              sub.status === "active" ? "active" : sub.status,
+            plan,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: sub.id,
+            current_period_end: currentPeriodEnd,
+          };
+
+          if (userId) {
+            await updateProfileById(userId, profileUpdates);
+          } else if (email) {
+            await updateProfileByEmail(email, profileUpdates);
+          }
         }
+
         break;
       }
 
@@ -107,20 +165,44 @@ export async function POST(req: Request) {
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
 
+        const stripeSubscriptionId = sub.id;
+        const stripeCustomerId =
+          typeof sub.customer === "string" ? sub.customer : null;
+
+        const currentPeriodEnd = sub.current_period_end
+          ? new Date(sub.current_period_end * 1000).toISOString()
+          : null;
+
+        // 1) update proscan_subscriptions
         const upsertPayload = {
-          stripe_subscription_id: sub.id,
-          stripe_customer_id:
-            typeof sub.customer === "string" ? sub.customer : null,
+          stripe_subscription_id: stripeSubscriptionId,
+          stripe_customer_id: stripeCustomerId,
           status: sub.status,
-          current_period_end: sub.current_period_end
-            ? new Date(sub.current_period_end * 1000).toISOString()
-            : null,
+          current_period_end: currentPeriodEnd,
           cancel_at_period_end: sub.cancel_at_period_end ?? false,
           updated_at: new Date().toISOString(),
         };
 
         const resp = await upsertSubscription(upsertPayload);
         if (resp) return resp;
+
+        // 2) keep profiles synced by subscription id
+        const { data: prof } = await supabaseAdmin
+          .from("profiles")
+          .select("id, plan")
+          .eq("stripe_subscription_id", stripeSubscriptionId)
+          .single();
+
+        if (prof?.id) {
+          await updateProfileById(prof.id, {
+            subscription_status:
+              sub.status === "active" ? "active" : sub.status,
+            stripe_customer_id: stripeCustomerId,
+            current_period_end: currentPeriodEnd,
+            // keep existing plan if set
+            plan: prof.plan || null,
+          });
+        }
 
         break;
       }

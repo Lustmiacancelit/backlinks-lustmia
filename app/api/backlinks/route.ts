@@ -1,15 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+/* ============================================================
+   TYPES
+============================================================ */
+type Mode = "mvp" | "pro";
 
 type BacklinkResult = {
   target: string;
   totalBacklinks: number;
   refDomains: number;
   sample: string[];
+
+  // Step C extras
+  pagesCrawled: number;
+  uniqueOutbound: number;
+  linksDetailed: LinkDetail[];
+  errors: string[];
 };
 
-type Mode = "mvp" | "pro";
+type LinkDetail = {
+  source_page: string;
+  target_url: string;
+  target_domain: string;
+  anchor_text: string | null;
+  rel: string | null;
+  nofollow: boolean;
+  sponsored: boolean;
+  ugc: boolean;
+  link_type: "editorial" | "directory" | "social" | "other";
+};
 
+/* ============================================================
+   SUPABASE ADMIN CLIENT
+============================================================ */
+function getSupabaseAdmin() {
+  const url =
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !key) {
+    throw new Error(
+      "Supabase admin not configured. Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  return createClient(url, key, {
+    auth: { persistSession: false },
+  });
+}
+
+/* ============================================================
+   HELPERS
+============================================================ */
 function normalizeUrl(input: string) {
   const raw = (input || "").trim();
   if (!raw) return "";
@@ -28,6 +74,37 @@ function getDomain(u: string) {
   }
 }
 
+function isProbablyHtml(url: string) {
+  // skip obvious files
+  return !/\.(pdf|jpg|jpeg|png|gif|webp|zip|rar|mp4|mp3|svg|css|js)$/i.test(url);
+}
+
+function classifyLink(targetUrl: string): LinkDetail["link_type"] {
+  const d = getDomain(targetUrl);
+  if (!d) return "other";
+  if (
+    d.includes("facebook.com") ||
+    d.includes("instagram.com") ||
+    d.includes("tiktok.com") ||
+    d.includes("x.com") ||
+    d.includes("twitter.com") ||
+    d.includes("linkedin.com") ||
+    d.includes("pinterest.com") ||
+    d.includes("youtube.com")
+  ) return "social";
+  if (
+    d.includes("directory") ||
+    d.includes("listing") ||
+    d.includes("yellowpages") ||
+    d.includes("map") ||
+    d.includes("wiki")
+  ) return "directory";
+  return "editorial";
+}
+
+/* ============================================================
+   FETCH MVP
+============================================================ */
 async function fetchHtmlMvp(target: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -52,7 +129,6 @@ async function fetchHtmlMvp(target: string) {
 
   if (!res.ok) {
     const err = new Error(`Request failed with status code ${res.status}`);
-    // attach status so caller can decide next step
     (err as any).status = res.status;
     throw err;
   }
@@ -60,6 +136,9 @@ async function fetchHtmlMvp(target: string) {
   return await res.text();
 }
 
+/* ============================================================
+   FETCH PRO (Browserless Unblock)
+============================================================ */
 async function fetchHtmlPro(target: string) {
   const token = process.env.BROWSERLESS_TOKEN;
   if (!token) {
@@ -68,8 +147,6 @@ async function fetchHtmlPro(target: string) {
     );
   }
 
-  // Browserless /unblock API + residential proxy
-  // Docs: https://docs.browserless.io/rest-apis/content (see /unblock section)
   const endpoint = `https://production-sfo.browserless.io/unblock?token=${token}&proxy=residential`;
 
   const res = await fetch(endpoint, {
@@ -85,10 +162,7 @@ async function fetchHtmlPro(target: string) {
     throw new Error(`Pro Scan failed with status code ${res.status}`);
   }
 
-  // /unblock returns JSON
   const data = await res.json().catch(() => ({}));
-
-  // try common response shapes
   const html =
     data?.content ||
     data?.data?.content ||
@@ -97,78 +171,221 @@ async function fetchHtmlPro(target: string) {
     "";
 
   if (!html || typeof html !== "string") {
-    throw new Error("Pro Scan returned empty HTML (still protected).");
+    throw new Error("Pro Scan returned empty HTML (site still protected).");
   }
 
   return html;
 }
 
-function extractOutboundLinks(target: string, html: string) {
-  const $ = cheerio.load(html);
-  const targetDomain = getDomain(target);
-
-  const links: string[] = [];
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href) return;
-
+async function fetchHtml(target: string, mode: Mode) {
+  try {
+    return await fetchHtmlMvp(target);
+  } catch (e: any) {
     if (
-      href.startsWith("#") ||
-      href.startsWith("mailto:") ||
-      href.startsWith("tel:") ||
-      href.startsWith("javascript:")
+      mode === "pro" &&
+      (e?.status === 403 || String(e?.message).includes("403"))
     ) {
-      return;
+      return await fetchHtmlPro(target);
     }
-
-    try {
-      const abs = new URL(href, target).toString();
-      links.push(abs);
-    } catch {
-      // ignore malformed
-    }
-  });
-
-  const uniqueLinks = Array.from(new Set(links));
-  const outbound = uniqueLinks.filter(
-    (l) => getDomain(l) && getDomain(l) !== targetDomain
-  );
-
-  const refDomains = new Set(outbound.map(getDomain).filter(Boolean));
-
-  return { outbound, refDomains };
+    throw e;
+  }
 }
 
+/* ============================================================
+   CRAWL ENGINE (depth + maxPages)
+============================================================ */
+async function crawlSite(
+  startUrl: string,
+  mode: Mode,
+  depth = 1,
+  maxPages = 8,
+  maxOutbound = 200
+) {
+  const startDomain = getDomain(startUrl);
+  const visited = new Set<string>();
+  const queue: Array<{ url: string; d: number }> = [{ url: startUrl, d: 0 }];
+
+  const outboundDetails: LinkDetail[] = [];
+  const errors: string[] = [];
+
+  while (queue.length && visited.size < maxPages) {
+    const { url, d } = queue.shift()!;
+    if (visited.has(url)) continue;
+    visited.add(url);
+
+    let html = "";
+    try {
+      html = await fetchHtml(url, mode);
+    } catch (err: any) {
+      errors.push(`${url}: ${err?.message || "fetch failed"}`);
+      continue;
+    }
+
+    const $ = cheerio.load(html);
+
+    // 1) collect internal links if depth allows
+    if (d < depth) {
+      $("a[href]").each((_, el) => {
+        const href = $(el).attr("href");
+        if (!href) return;
+
+        if (
+          href.startsWith("#") ||
+          href.startsWith("mailto:") ||
+          href.startsWith("tel:") ||
+          href.startsWith("javascript:")
+        ) return;
+
+        try {
+          const abs = new URL(href, url).toString();
+          const dom = getDomain(abs);
+          if (dom === startDomain && isProbablyHtml(abs)) {
+            if (!visited.has(abs)) {
+              queue.push({ url: abs, d: d + 1 });
+            }
+          }
+        } catch {}
+      });
+    }
+
+    // 2) extract outbound links on this page
+    $("a[href]").each((_, el) => {
+      if (outboundDetails.length >= maxOutbound) return;
+
+      const href = $(el).attr("href");
+      if (!href) return;
+
+      if (
+        href.startsWith("#") ||
+        href.startsWith("mailto:") ||
+        href.startsWith("tel:") ||
+        href.startsWith("javascript:")
+      ) return;
+
+      try {
+        const abs = new URL(href, url).toString();
+        const dom = getDomain(abs);
+        if (!dom || dom === startDomain) return;
+
+        const anchor = $(el).text().trim() || null;
+        const rel = ($(el).attr("rel") || "").toLowerCase() || null;
+
+        const nofollow = !!rel?.includes("nofollow");
+        const sponsored = !!rel?.includes("sponsored");
+        const ugc = !!rel?.includes("ugc");
+
+        outboundDetails.push({
+          source_page: url,
+          target_url: abs,
+          target_domain: dom,
+          anchor_text: anchor,
+          rel,
+          nofollow,
+          sponsored,
+          ugc,
+          link_type: classifyLink(abs),
+        });
+      } catch {}
+    });
+  }
+
+  return { outboundDetails, pagesCrawled: visited.size, errors };
+}
+
+/* ============================================================
+   MAIN HANDLER
+============================================================ */
 export async function POST(req: NextRequest) {
   try {
-    const { url, mode } = await req.json();
-    const target = normalizeUrl(url);
-    const scanMode: Mode = mode === "pro" ? "pro" : "mvp";
+    const body = await req.json().catch(() => ({}));
+    const target = normalizeUrl(body.url);
+    const mode: Mode = body.mode === "pro" ? "pro" : "mvp";
 
     if (!target) {
       return NextResponse.json({ error: "Missing url" }, { status: 400 });
     }
 
-    let html = "";
-    try {
-      html = await fetchHtmlMvp(target);
-    } catch (e: any) {
-      // If MVP got blocked AND user requested pro, fallback to pro
-      if (scanMode === "pro" && (e?.status === 403 || String(e?.message).includes("403"))) {
-        html = await fetchHtmlPro(target);
-      } else {
-        throw e;
-      }
-    }
+    const userId =
+      body.userId ||
+      body.u ||
+      "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
 
-    const { outbound, refDomains } = extractOutboundLinks(target, html);
+    // Pro gets deeper crawl by default
+    const depth = Number(body.depth ?? (mode === "pro" ? 2 : 1));
+    const maxPages = Number(body.maxPages ?? (mode === "pro" ? 12 : 6));
+
+    const { outboundDetails, pagesCrawled, errors } = await crawlSite(
+      target,
+      mode,
+      depth,
+      maxPages
+    );
+
+    // unique outbound
+    const uniqueOutbound = Array.from(
+      new Set(outboundDetails.map((l) => l.target_url))
+    );
+
+    const refDomains = new Set(
+      outboundDetails.map((l) => l.target_domain).filter(Boolean)
+    );
 
     const result: BacklinkResult = {
       target,
-      totalBacklinks: outbound.length,
+      totalBacklinks: uniqueOutbound.length,
       refDomains: refDomains.size,
-      sample: outbound.slice(0, 10),
+      sample: uniqueOutbound.slice(0, 10),
+
+      pagesCrawled,
+      uniqueOutbound: uniqueOutbound.length,
+      linksDetailed: outboundDetails.slice(0, 200),
+      errors,
     };
+
+    // Save summary + details
+    try {
+      const supabase = getSupabaseAdmin();
+      const domain = getDomain(target);
+
+      const { data: scanRow, error: scanErr } = await supabase
+        .from("backlinks_scans")
+        .insert({
+          user_id: userId,
+          url: target,
+          domain,
+          mode,
+          total_backlinks: result.totalBacklinks,
+          ref_domains: result.refDomains,
+          sample: result.sample,
+        })
+        .select("id")
+        .single();
+
+      if (scanErr) throw scanErr;
+
+      const scanId = scanRow?.id;
+
+      if (scanId && outboundDetails.length) {
+        const payload = outboundDetails.map((l) => ({
+          scan_id: scanId,
+          user_id: userId,
+          source_page: l.source_page,
+          target_url: l.target_url,
+          target_domain: l.target_domain,
+          anchor_text: l.anchor_text,
+          rel: l.rel,
+          nofollow: l.nofollow,
+          sponsored: l.sponsored,
+          ugc: l.ugc,
+          link_type: l.link_type,
+        }));
+
+        // bulk insert
+        await supabase.from("backlinks_scan_links").insert(payload);
+      }
+    } catch (dbErr) {
+      console.error("Supabase insert error:", dbErr);
+    }
 
     return NextResponse.json(result);
   } catch (e: any) {
