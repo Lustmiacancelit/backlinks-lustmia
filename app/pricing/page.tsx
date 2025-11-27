@@ -15,7 +15,7 @@ type TierKey = "free" | "personal" | "business" | "agency";
 
 /**
  * Read Stripe price IDs statically so Next.js can inline them.
- * This is the key change: NO dynamic (process.env as any)[name] access.
+ * No dynamic (process.env as any)[name] access on the client.
  */
 const STRIPE_PRICE_IDS = {
   personal: process.env.NEXT_PUBLIC_STRIPE_PRICE_PERSONAL,
@@ -49,7 +49,7 @@ const PLANS: Record<
   },
   personal: {
     name: "Personal",
-    price: 19,
+    price: 19.99, // ✅ matches Stripe Starter price
     badge: "Best for Gmail",
     tagline: "For solo founders & creators.",
     bullets: [
@@ -63,7 +63,7 @@ const PLANS: Record<
   },
   business: {
     name: "Business",
-    price: 49,
+    price: 49.99, // ✅ matches Stripe Business price
     badge: "Most popular",
     highlight: true,
     tagline: "For brands & teams.",
@@ -79,7 +79,7 @@ const PLANS: Record<
   },
   agency: {
     name: "Agency",
-    price: 99,
+    price: 129.99, // ✅ updated Agency price
     tagline: "For multi-client work.",
     bullets: [
       "1,000 scans / month",
@@ -255,7 +255,9 @@ export default function PricingPage() {
                 <p className="text-white/60 text-sm mt-1">{plan.tagline}</p>
 
                 <div className="mt-4 flex items-end gap-1">
-                  <div className="text-4xl font-bold">${plan.price}</div>
+                  <div className="text-4xl font-bold">
+                    ${plan.price.toFixed(2)}
+                  </div>
                   <div className="text-white/60 text-sm mb-1">/mo</div>
                 </div>
 

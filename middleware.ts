@@ -3,63 +3,64 @@ import type { NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
   const pathname = req.nextUrl.pathname;
 
+  // Only protect dashboard + scans API
   const isProtected =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/api/scans");
 
-  if (!isProtected) return res;
+  // Public routes (/, /pricing, /about, /login, /register, etc.)
+  if (!isProtected) {
+    return NextResponse.next();
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnon =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY;
 
-  // If env is missing, fail closed to landing (never 500)
   if (!supabaseUrl || !supabaseAnon) {
-    return NextResponse.redirect(new URL("/", req.url));
+    // If env vars are broken, at least send to login
+    return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  try {
-    const supabase = createServerClient(supabaseUrl, supabaseAnon, {
-      cookies: {
-        get(name) {
-          return req.cookies.get(name)?.value;
-        },
-        set(name, value, options) {
-          res.cookies.set({ name, value, ...options });
-        },
-        remove(name, options) {
-          res.cookies.set({ name, value: "", ...options });
-        },
+  const res = NextResponse.next();
+
+  const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+    cookies: {
+      get(name) {
+        return req.cookies.get(name)?.value;
       },
-    });
+      set(name, value, options) {
+        res.cookies.set({ name, value, ...options });
+      },
+      remove(name, options) {
+        res.cookies.set({ name, value: "", ...options });
+      },
+    },
+  });
 
-    const { data: { user } } = await supabase.auth.getUser();
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    // Not logged in → landing
+    // ❌ Not logged in → send to login, remember where they were going
     if (!user) {
-      return NextResponse.redirect(new URL("/", req.url));
+      const loginUrl = new URL("/login", req.url);
+      loginUrl.searchParams.set("next", pathname); // so after login they go to /dashboard
+      return NextResponse.redirect(loginUrl);
     }
 
-    // Subscription gate
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("subscription_status")
-      .eq("id", user.id)
-      .single();
-
-    // If profiles read fails (RLS/table missing/etc) treat as inactive
-    if (error || profile?.subscription_status !== "active") {
-      return NextResponse.redirect(new URL("/pricing", req.url));
-    }
-
+    // ✅ Logged in → ALWAYS allow dashboard, regardless of free / paid
+    // (free users see the Upgrade button & are limited by proscan/quota)
     return res;
-  } catch {
-    // Any edge/runtime failure → landing
-    return NextResponse.redirect(new URL("/", req.url));
+  } catch (err) {
+    console.error("middleware auth error", err);
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 }
 
