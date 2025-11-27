@@ -10,12 +10,12 @@ import {
   ShieldCheck,
   BarChart3,
 } from "lucide-react";
+import { createBrowserClient } from "@supabase/ssr";
 
 type TierKey = "free" | "personal" | "business" | "agency";
 
 /**
- * Read Stripe price IDs statically so Next.js can inline them.
- * No dynamic (process.env as any)[name] access on the client.
+ * Stripe price IDs – read once at build time.
  */
 const STRIPE_PRICE_IDS = {
   personal: process.env.NEXT_PUBLIC_STRIPE_PRICE_PERSONAL,
@@ -30,7 +30,7 @@ const PLANS: Record<
     price: number;
     tagline: string;
     bullets: string[];
-    priceId?: string; // resolved at build time from env
+    priceId?: string;
     badge?: string;
     highlight?: boolean;
   }
@@ -49,7 +49,7 @@ const PLANS: Record<
   },
   personal: {
     name: "Personal",
-    price: 19.99, // ✅ matches Stripe Starter price
+    price: 19,
     badge: "Best for Gmail",
     tagline: "For solo founders & creators.",
     bullets: [
@@ -63,7 +63,7 @@ const PLANS: Record<
   },
   business: {
     name: "Business",
-    price: 49.99, // ✅ matches Stripe Business price
+    price: 49,
     badge: "Most popular",
     highlight: true,
     tagline: "For brands & teams.",
@@ -79,7 +79,7 @@ const PLANS: Record<
   },
   agency: {
     name: "Agency",
-    price: 129.99, // ✅ updated Agency price
+    price: 129,
     tagline: "For multi-client work.",
     bullets: [
       "1,000 scans / month",
@@ -92,6 +92,13 @@ const PLANS: Record<
   },
 };
 
+function getSupabaseBrowser() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+  return createBrowserClient(url, anon);
+}
+
 export default function PricingPage() {
   const router = useRouter();
 
@@ -99,10 +106,54 @@ export default function PricingPage() {
   const [selected, setSelected] = useState<TierKey | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // email captured from landing/register
+  // --- hydrate email from URL, localStorage, then Supabase user ---
   useEffect(() => {
-    const e = localStorage.getItem("lead_email");
-    setEmail(e);
+    (async () => {
+      if (typeof window === "undefined") return;
+
+      let found: string | null = null;
+
+      // 1) ?email= in querystring
+      try {
+        const params = new URLSearchParams(window.location.search);
+        found = params.get("email");
+      } catch {
+        // ignore
+      }
+
+      // 2) localStorage lead_email
+      if (!found) {
+        try {
+          found = localStorage.getItem("lead_email");
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // 3) logged-in Supabase user
+      if (!found) {
+        const supabase = getSupabaseBrowser();
+        if (supabase) {
+          try {
+            const { data } = await supabase.auth.getUser();
+            if (data.user?.email) {
+              found = data.user.email;
+            }
+          } catch {
+            // ignore auth errors, fall back to null
+          }
+        }
+      }
+
+      if (found) {
+        setEmail(found);
+        try {
+          localStorage.setItem("lead_email", found);
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
   }, []);
 
   const suggestedTier: TierKey = useMemo(() => {
@@ -116,7 +167,7 @@ export default function PricingPage() {
     setError(null);
     setSelected(tier);
 
-    // Free plan → no Stripe
+    // Free plan → no Stripe, just register free account
     if (tier === "free") {
       router.push(
         `/register?free=1${
@@ -127,7 +178,7 @@ export default function PricingPage() {
     }
 
     if (!email) {
-      setError("Go back and enter your email first.");
+      setError("Missing email. Sign in or enter your email on the homepage first.");
       setSelected(null);
       return;
     }
@@ -151,6 +202,7 @@ export default function PricingPage() {
 
       const data = await r.json();
       if (data?.url) {
+        // Stripe Checkout
         window.location.href = data.url;
       } else {
         setError(data?.error || "Could not start checkout.");
@@ -190,11 +242,11 @@ export default function PricingPage() {
               <p className="text-white/70 mt-1 text-sm">
                 {email ? (
                   <>
-                    Pricing for{" "}
+                    We&apos;ll collect your email during checkout:{" "}
                     <span className="text-fuchsia-300">{email}</span>
                   </>
                 ) : (
-                  <>Enter your email on the homepage to unlock pricing.</>
+                  <>Sign in or start a free trial to unlock personalized pricing.</>
                 )}
               </p>
             </div>
@@ -255,9 +307,7 @@ export default function PricingPage() {
                 <p className="text-white/60 text-sm mt-1">{plan.tagline}</p>
 
                 <div className="mt-4 flex items-end gap-1">
-                  <div className="text-4xl font-bold">
-                    ${plan.price.toFixed(2)}
-                  </div>
+                  <div className="text-4xl font-bold">${plan.price}</div>
                   <div className="text-white/60 text-sm mb-1">/mo</div>
                 </div>
 
