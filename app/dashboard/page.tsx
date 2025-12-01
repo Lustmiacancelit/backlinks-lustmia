@@ -26,11 +26,19 @@ import {
 import clsx from "clsx";
 import { supabaseBrowserClient } from "@/lib/supabase/browser"; // Supabase
 
+type AiInsights = {
+  summary?: string;
+  toxicityNotes?: string;
+  outreachIdeas?: string[];
+  competitorGaps?: string[];
+};
+
 type BacklinkResult = {
   target: string;
   totalBacklinks: number;
   refDomains: number;
   sample: string[];
+  aiInsights?: AiInsights; // optional AI insights from /api/backlinks
 };
 
 type Mode = "mvp" | "pro";
@@ -431,6 +439,68 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
+
+              {/* AI INSIGHTS PANEL */}
+              {result.aiInsights && (
+                <div className="md:col-span-3 mt-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+                  <h2 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                    <SparklesIcon />
+                    AI Insights
+                  </h2>
+
+                  <div className="space-y-3 text-sm text-white/80">
+                    {result.aiInsights.summary && (
+                      <div>
+                        <div className="font-semibold mb-1 text-white">
+                          Summary
+                        </div>
+                        <p>{result.aiInsights.summary}</p>
+                      </div>
+                    )}
+
+                    {result.aiInsights.toxicityNotes && (
+                      <div>
+                        <div className="font-semibold mb-1 text-white">
+                          Toxicity Notes
+                        </div>
+                        <p>{result.aiInsights.toxicityNotes}</p>
+                      </div>
+                    )}
+
+                    {result.aiInsights.outreachIdeas &&
+                      result.aiInsights.outreachIdeas.length > 0 && (
+                        <div>
+                          <div className="font-semibold mb-1 text-white">
+                            Outreach Ideas
+                          </div>
+                          <ul className="list-disc list-inside space-y-1">
+                            {result.aiInsights.outreachIdeas.map(
+                              (idea, idx) => (
+                                <li key={idx}>{idea}</li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+
+                    {result.aiInsights.competitorGaps &&
+                      result.aiInsights.competitorGaps.length > 0 && (
+                        <div>
+                          <div className="font-semibold mb-1 text-white">
+                            Competitor Gaps
+                          </div>
+                          <ul className="list-disc list-inside space-y-1">
+                            {result.aiInsights.competitorGaps.map(
+                              (gap, idx) => (
+                                <li key={idx}>{gap}</li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -742,4 +812,11 @@ function safeHost(link: string) {
   } catch {
     return link;
   }
+}
+
+function SparklesIcon() {
+  // tiny inline icon so we don't need a new lucide import
+  return (
+    <span className="inline-block w-4 h-4 rounded-full bg-gradient-to-tr from-pink-400 to-fuchsia-300" />
+  );
 }

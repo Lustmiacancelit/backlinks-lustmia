@@ -9,6 +9,25 @@ export const runtime = "nodejs";
 ============================================================ */
 type Mode = "mvp" | "pro";
 
+type LinkDetail = {
+  source_page: string;
+  target_url: string;
+  target_domain: string;
+  anchor_text: string | null;
+  rel: string | null;
+  nofollow: boolean;
+  sponsored: boolean;
+  ugc: boolean;
+  link_type: "editorial" | "directory" | "social" | "other";
+};
+
+type AiBacklinkInsight = {
+  summary: string;
+  toxicityNotes: string;
+  outreachIdeas: string[];
+  competitorGaps: string[];
+};
+
 type BacklinkResult = {
   target: string;
   totalBacklinks: number;
@@ -20,18 +39,9 @@ type BacklinkResult = {
   uniqueOutbound: number;
   linksDetailed: LinkDetail[];
   errors: string[];
-};
 
-type LinkDetail = {
-  source_page: string;
-  target_url: string;
-  target_domain: string;
-  anchor_text: string | null;
-  rel: string | null;
-  nofollow: boolean;
-  sponsored: boolean;
-  ugc: boolean;
-  link_type: "editorial" | "directory" | "social" | "other";
+  // Pro-only AI extras
+  aiInsights?: AiBacklinkInsight | null;
 };
 
 /* ============================================================
@@ -91,14 +101,16 @@ function classifyLink(targetUrl: string): LinkDetail["link_type"] {
     d.includes("linkedin.com") ||
     d.includes("pinterest.com") ||
     d.includes("youtube.com")
-  ) return "social";
+  )
+    return "social";
   if (
     d.includes("directory") ||
     d.includes("listing") ||
     d.includes("yellowpages") ||
     d.includes("map") ||
     d.includes("wiki")
-  ) return "directory";
+  )
+    return "directory";
   return "editorial";
 }
 
@@ -234,7 +246,8 @@ async function crawlSite(
           href.startsWith("mailto:") ||
           href.startsWith("tel:") ||
           href.startsWith("javascript:")
-        ) return;
+        )
+          return;
 
         try {
           const abs = new URL(href, url).toString();
@@ -260,7 +273,8 @@ async function crawlSite(
         href.startsWith("mailto:") ||
         href.startsWith("tel:") ||
         href.startsWith("javascript:")
-      ) return;
+      )
+        return;
 
       try {
         const abs = new URL(href, url).toString();
@@ -290,6 +304,104 @@ async function crawlSite(
   }
 
   return { outboundDetails, pagesCrawled: visited.size, errors };
+}
+
+/* ============================================================
+   AI INSIGHTS (Pro only, optional)
+============================================================ */
+async function generateAiInsights(
+  base: BacklinkResult
+): Promise<AiBacklinkInsight | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const topLinks = base.sample.slice(0, 15);
+    const domains = Array.from(
+      new Set(base.linksDetailed.map((l) => l.target_domain))
+    ).slice(0, 15);
+
+    const userContent = `
+Target site: ${base.target}
+Total backlinks: ${base.totalBacklinks}
+Referring domains: ${base.refDomains}
+
+Sample backlinks:
+${topLinks.join("\n")}
+
+Sample referring domains:
+${domains.join(", ")}
+`.trim();
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an SEO backlink and off-page expert. Analyze backlink quality, toxicity risk, and growth ideas. Always respond as compact JSON.",
+          },
+          {
+            role: "user",
+            content: `
+Given this backlink profile, do the following:
+1) Provide a short 2–3 sentence summary of overall backlink health.
+2) List 3 bullet points about potential toxicity or spam risk.
+3) List 3–5 specific outreach or growth ideas.
+4) List 3–5 likely competitor gap areas (types of sites or domains the user is missing).
+
+Return JSON ONLY with keys:
+- summary (string)
+- toxicityNotes (string)
+- outreachIdeas (string[] of short bullets)
+- competitorGaps (string[] of short bullets)
+
+Profile:
+${userContent}
+            `.trim(),
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI insights HTTP error:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== "string") return null;
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      console.error("Failed to parse AI JSON:", content);
+      return null;
+    }
+
+    return {
+      summary: parsed.summary ?? "",
+      toxicityNotes: parsed.toxicityNotes ?? "",
+      outreachIdeas: Array.isArray(parsed.outreachIdeas)
+        ? parsed.outreachIdeas
+        : [],
+      competitorGaps: Array.isArray(parsed.competitorGaps)
+        ? parsed.competitorGaps
+        : [],
+    };
+  } catch (err) {
+    console.error("AI insights error:", err);
+    return null;
+  }
 }
 
 /* ============================================================
@@ -330,7 +442,7 @@ export async function POST(req: NextRequest) {
       outboundDetails.map((l) => l.target_domain).filter(Boolean)
     );
 
-    const result: BacklinkResult = {
+    const baseResult: BacklinkResult = {
       target,
       totalBacklinks: uniqueOutbound.length,
       refDomains: refDomains.size,
@@ -340,6 +452,17 @@ export async function POST(req: NextRequest) {
       uniqueOutbound: uniqueOutbound.length,
       linksDetailed: outboundDetails.slice(0, 200),
       errors,
+    };
+
+    // ---- AI insights only for Pro mode (and only if API key is set) ----
+    let aiInsights: AiBacklinkInsight | null = null;
+    if (mode === "pro") {
+      aiInsights = await generateAiInsights(baseResult);
+    }
+
+    const result: BacklinkResult = {
+      ...baseResult,
+      aiInsights,
     };
 
     // Save summary + details
