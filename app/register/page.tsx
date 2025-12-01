@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createSupabaseBrowser } from "@/lib/supabase/browser";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 import { ArrowRight, Link2, Sparkles } from "lucide-react";
 
 function RegisterInner() {
@@ -11,7 +11,7 @@ function RegisterInner() {
   const isFree = params.get("free") === "1";
   const emailFromQuery = params.get("email") || "";
 
-  const supabase = createSupabaseBrowser();
+  const supabase = supabaseBrowserClient;
 
   const [email, setEmail] = useState(emailFromQuery);
   const [sent, setSent] = useState(false);

@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createSupabaseBrowser } from "@/lib/supabase/browser";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 import { ArrowRight, Link2, Sparkles } from "lucide-react";
 
 function LoginInner() {
@@ -10,7 +10,7 @@ function LoginInner() {
   const params = useSearchParams();
   const next = params.get("next") || "/dashboard";
 
-  const supabase = createSupabaseBrowser();
+  const supabase = supabaseBrowserClient;
 
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
