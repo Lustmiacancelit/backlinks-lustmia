@@ -1,11 +1,10 @@
 "use client";
 
-import DashboardLayout from "@/components/DashboardLayout";
 import Link from "next/link";
 
 export default function BillingPage() {
   return (
-    <DashboardLayout>
+    <>
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
@@ -36,10 +35,10 @@ export default function BillingPage() {
           <h2 className="font-semibold mb-2">Invoices</h2>
           <p className="text-sm text-white/70">
             When you subscribe via Stripe, paid invoices will appear here with
-            download links.
+            downloadable links.
           </p>
         </div>
       </section>
-    </DashboardLayout>
+    </>
   );
 }
