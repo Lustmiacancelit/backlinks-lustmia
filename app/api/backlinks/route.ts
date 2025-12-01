@@ -1,3 +1,4 @@
+// app/api/backlinks/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
 ============================================================ */
 type Mode = "mvp" | "pro";
 
+type LinkType = "editorial" | "directory" | "social" | "other";
+
 type LinkDetail = {
   source_page: string;
   target_url: string;
@@ -18,14 +21,14 @@ type LinkDetail = {
   nofollow: boolean;
   sponsored: boolean;
   ugc: boolean;
-  link_type: "editorial" | "directory" | "social" | "other";
+  link_type: LinkType;
 };
 
-type AiBacklinkInsight = {
+type AiInsights = {
   summary: string;
   toxicityNotes: string;
-  outreachIdeas: string[];
-  competitorGaps: string[];
+  outreachIdeas: string;
+  competitorGaps: string;
 };
 
 type BacklinkResult = {
@@ -34,23 +37,26 @@ type BacklinkResult = {
   refDomains: number;
   sample: string[];
 
-  // Step C extras
+  // Crawl extras
   pagesCrawled: number;
   uniqueOutbound: number;
   linksDetailed: LinkDetail[];
   errors: string[];
 
-  // Pro-only AI extras
-  aiInsights?: AiBacklinkInsight | null;
+  // AI
+  aiInsights?: AiInsights;
 };
 
 /* ============================================================
    SUPABASE ADMIN CLIENT
 ============================================================ */
 function getSupabaseAdmin() {
-  const url =
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE;
 
   if (!url || !key) {
     throw new Error(
@@ -85,13 +91,13 @@ function getDomain(u: string) {
 }
 
 function isProbablyHtml(url: string) {
-  // skip obvious files
   return !/\.(pdf|jpg|jpeg|png|gif|webp|zip|rar|mp4|mp3|svg|css|js)$/i.test(url);
 }
 
-function classifyLink(targetUrl: string): LinkDetail["link_type"] {
+function classifyLink(targetUrl: string): LinkType {
   const d = getDomain(targetUrl);
   if (!d) return "other";
+
   if (
     d.includes("facebook.com") ||
     d.includes("instagram.com") ||
@@ -101,16 +107,20 @@ function classifyLink(targetUrl: string): LinkDetail["link_type"] {
     d.includes("linkedin.com") ||
     d.includes("pinterest.com") ||
     d.includes("youtube.com")
-  )
+  ) {
     return "social";
+  }
+
   if (
     d.includes("directory") ||
     d.includes("listing") ||
     d.includes("yellowpages") ||
     d.includes("map") ||
     d.includes("wiki")
-  )
+  ) {
     return "directory";
+  }
+
   return "editorial";
 }
 
@@ -140,8 +150,10 @@ async function fetchHtmlMvp(target: string) {
   clearTimeout(timeout);
 
   if (!res.ok) {
-    const err = new Error(`Request failed with status code ${res.status}`);
-    (err as any).status = res.status;
+    const err: any = new Error(
+      `Request failed with status code ${res.status}`
+    );
+    err.status = res.status;
     throw err;
   }
 
@@ -174,7 +186,7 @@ async function fetchHtmlPro(target: string) {
     throw new Error(`Pro Scan failed with status code ${res.status}`);
   }
 
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({} as any));
   const html =
     data?.content ||
     data?.data?.content ||
@@ -204,7 +216,7 @@ async function fetchHtml(target: string, mode: Mode) {
 }
 
 /* ============================================================
-   CRAWL ENGINE (depth + maxPages)
+   CRAWL ENGINE
 ============================================================ */
 async function crawlSite(
   startUrl: string,
@@ -246,8 +258,9 @@ async function crawlSite(
           href.startsWith("mailto:") ||
           href.startsWith("tel:") ||
           href.startsWith("javascript:")
-        )
+        ) {
           return;
+        }
 
         try {
           const abs = new URL(href, url).toString();
@@ -257,7 +270,9 @@ async function crawlSite(
               queue.push({ url: abs, d: d + 1 });
             }
           }
-        } catch {}
+        } catch {
+          // ignore bad href
+        }
       });
     }
 
@@ -273,8 +288,9 @@ async function crawlSite(
         href.startsWith("mailto:") ||
         href.startsWith("tel:") ||
         href.startsWith("javascript:")
-      )
+      ) {
         return;
+      }
 
       try {
         const abs = new URL(href, url).toString();
@@ -282,11 +298,12 @@ async function crawlSite(
         if (!dom || dom === startDomain) return;
 
         const anchor = $(el).text().trim() || null;
-        const rel = ($(el).attr("rel") || "").toLowerCase() || null;
+        const relAttr = ($(el).attr("rel") || "").toLowerCase();
+        const rel = relAttr || null;
 
-        const nofollow = !!rel?.includes("nofollow");
-        const sponsored = !!rel?.includes("sponsored");
-        const ugc = !!rel?.includes("ugc");
+        const nofollow = !!relAttr.includes("nofollow");
+        const sponsored = !!relAttr.includes("sponsored");
+        const ugc = !!relAttr.includes("ugc");
 
         outboundDetails.push({
           source_page: url,
@@ -299,7 +316,9 @@ async function crawlSite(
           ugc,
           link_type: classifyLink(abs),
         });
-      } catch {}
+      } catch {
+        // ignore
+      }
     });
   }
 
@@ -307,99 +326,88 @@ async function crawlSite(
 }
 
 /* ============================================================
-   AI INSIGHTS (Pro only, optional)
+   AI INSIGHTS (OpenAI)
 ============================================================ */
 async function generateAiInsights(
-  base: BacklinkResult
-): Promise<AiBacklinkInsight | null> {
+  result: BacklinkResult
+): Promise<AiInsights | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
   try {
-    const topLinks = base.sample.slice(0, 15);
-    const domains = Array.from(
-      new Set(base.linksDetailed.map((l) => l.target_domain))
-    ).slice(0, 15);
+    const anchorSamples = result.linksDetailed
+      .slice(0, 20)
+      .map((l) => ({
+        anchor: l.anchor_text,
+        domain: l.target_domain,
+        type: l.link_type,
+        nofollow: l.nofollow,
+        sponsored: l.sponsored,
+      }));
 
-    const userContent = `
-Target site: ${base.target}
-Total backlinks: ${base.totalBacklinks}
-Referring domains: ${base.refDomains}
+    const body = {
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an SEO backlinks analyst. Respond in concise JSON only.",
+        },
+        {
+          role: "user",
+          content: [
+            "You are analysing a backlink profile. Using the data below, write:",
+            "1) A short clinical summary of the profile.",
+            "2) Notes on toxicity risk (if low, say so).",
+            "3) 4–6 concrete outreach ideas.",
+            "4) 3–6 short competitor / gap notes.",
+            "",
+            "Return JSON with keys: summary, toxicityNotes, outreachIdeas, competitorGaps.",
+            "",
+            `Stats: totalBacklinks=${result.totalBacklinks}, refDomains=${result.refDomains}`,
+            `Sample anchors & domains: ${JSON.stringify(anchorSamples).slice(
+              0,
+              4000
+            )}`,
+          ].join("\n"),
+        },
+      ],
+      temperature: 0.4,
+      max_tokens: 400,
+      response_format: { type: "json_object" },
+    };
 
-Sample backlinks:
-${topLinks.join("\n")}
-
-Sample referring domains:
-${domains.join(", ")}
-`.trim();
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an SEO backlink and off-page expert. Analyze backlink quality, toxicity risk, and growth ideas. Always respond as compact JSON.",
-          },
-          {
-            role: "user",
-            content: `
-Given this backlink profile, do the following:
-1) Provide a short 2–3 sentence summary of overall backlink health.
-2) List 3 bullet points about potential toxicity or spam risk.
-3) List 3–5 specific outreach or growth ideas.
-4) List 3–5 likely competitor gap areas (types of sites or domains the user is missing).
-
-Return JSON ONLY with keys:
-- summary (string)
-- toxicityNotes (string)
-- outreachIdeas (string[] of short bullets)
-- competitorGaps (string[] of short bullets)
-
-Profile:
-${userContent}
-            `.trim(),
-          },
-        ],
-      }),
-    });
+    const response = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      }
+    );
 
     if (!response.ok) {
-      console.error("AI insights HTTP error:", response.status);
+      // Don’t fail the whole scan if AI is down
       return null;
     }
 
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content || typeof content !== "string") return null;
+    const json = (await response.json()) as any;
+    const raw = json?.choices?.[0]?.message?.content;
+    if (!raw || typeof raw !== "string") return null;
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      console.error("Failed to parse AI JSON:", content);
-      return null;
-    }
-
-    return {
-      summary: parsed.summary ?? "",
-      toxicityNotes: parsed.toxicityNotes ?? "",
-      outreachIdeas: Array.isArray(parsed.outreachIdeas)
-        ? parsed.outreachIdeas
-        : [],
-      competitorGaps: Array.isArray(parsed.competitorGaps)
-        ? parsed.competitorGaps
-        : [],
+    const parsed = JSON.parse(raw);
+    const insights: AiInsights = {
+      summary: String(parsed.summary || "").trim(),
+      toxicityNotes: String(parsed.toxicityNotes || "").trim(),
+      outreachIdeas: String(parsed.outreachIdeas || "").trim(),
+      competitorGaps: String(parsed.competitorGaps || "").trim(),
     };
-  } catch (err) {
-    console.error("AI insights error:", err);
+
+    return insights;
+  } catch {
     return null;
   }
 }
@@ -409,7 +417,7 @@ ${userContent}
 ============================================================ */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({} as any));
     const target = normalizeUrl(body.url);
     const mode: Mode = body.mode === "pro" ? "pro" : "mvp";
 
@@ -418,9 +426,7 @@ export async function POST(req: NextRequest) {
     }
 
     const userId =
-      body.userId ||
-      body.u ||
-      "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
+      body.userId || body.u || "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
 
     // Pro gets deeper crawl by default
     const depth = Number(body.depth ?? (mode === "pro" ? 2 : 1));
@@ -433,19 +439,18 @@ export async function POST(req: NextRequest) {
       maxPages
     );
 
-    // unique outbound
     const uniqueOutbound = Array.from(
       new Set(outboundDetails.map((l) => l.target_url))
     );
 
-    const refDomains = new Set(
+    const refDomainsSet = new Set(
       outboundDetails.map((l) => l.target_domain).filter(Boolean)
     );
 
     const baseResult: BacklinkResult = {
       target,
       totalBacklinks: uniqueOutbound.length,
-      refDomains: refDomains.size,
+      refDomains: refDomainsSet.size,
       sample: uniqueOutbound.slice(0, 10),
 
       pagesCrawled,
@@ -454,18 +459,14 @@ export async function POST(req: NextRequest) {
       errors,
     };
 
-    // ---- AI insights only for Pro mode (and only if API key is set) ----
-    let aiInsights: AiBacklinkInsight | null = null;
-    if (mode === "pro") {
-      aiInsights = await generateAiInsights(baseResult);
-    }
-
-    const result: BacklinkResult = {
+    // Generate AI insights (non-blocking failure)
+    const aiInsights = await generateAiInsights(baseResult);
+    const finalResult: BacklinkResult = {
       ...baseResult,
-      aiInsights,
+      aiInsights: aiInsights || undefined,
     };
 
-    // Save summary + details
+    // Save summary + details to Supabase (fire & forget)
     try {
       const supabase = getSupabaseAdmin();
       const domain = getDomain(target);
@@ -477,16 +478,16 @@ export async function POST(req: NextRequest) {
           url: target,
           domain,
           mode,
-          total_backlinks: result.totalBacklinks,
-          ref_domains: result.refDomains,
-          sample: result.sample,
+          total_backlinks: finalResult.totalBacklinks,
+          ref_domains: finalResult.refDomains,
+          sample: finalResult.sample,
         })
         .select("id")
         .single();
 
       if (scanErr) throw scanErr;
 
-      const scanId = scanRow?.id;
+      const scanId = (scanRow as any)?.id;
 
       if (scanId && outboundDetails.length) {
         const payload = outboundDetails.map((l) => ({
@@ -503,14 +504,13 @@ export async function POST(req: NextRequest) {
           link_type: l.link_type,
         }));
 
-        // bulk insert
         await supabase.from("backlinks_scan_links").insert(payload);
       }
     } catch (dbErr) {
       console.error("Supabase insert error:", dbErr);
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json(finalResult);
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Scan failed" },
