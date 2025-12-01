@@ -1,13 +1,35 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
 // Demo user (falmeida)
 const DEMO_USER_ID = "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
 
-// Optional: admin / test user ID for full Agency access
-const ADMIN_USER_ID = process.env.PROSCAN_ADMIN_USER_ID || "";
+// Emails that should always get "agency / active" ProScan access
+const ADMIN_TEST_EMAILS = ["sales@lustmia.com"];
+
+function getSupabaseAdmin() {
+  // Prefer server env, fallback to NEXT_PUBLIC for safety
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE;
+
+  if (!url || !key) {
+    throw new Error(
+      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY",
+    );
+  }
+
+  return createClient(url, key, {
+    auth: { persistSession: false },
+  });
+}
 
 /**
  * Plan → daily Pro Scan limits.
@@ -31,27 +53,6 @@ const PLAN_LIMITS: Record<string, number> = {
   agency: Number(process.env.PROSCAN_LIMIT_AGENCY ?? 40),
 };
 
-function getSupabaseAdmin() {
-  // Prefer server env, fallback to NEXT_PUBLIC for safety
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE ||
-    process.env.SUPABASE_SERVICE;
-
-  if (!url || !key) {
-    throw new Error(
-      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY"
-    );
-  }
-
-  return createClient(url, key, {
-    auth: { persistSession: false },
-  });
-}
-
 function computePlanLimit(planRaw: string | null | undefined, status: string) {
   const plan = (planRaw || "free").toLowerCase();
 
@@ -67,42 +68,68 @@ function computePlanLimit(planRaw: string | null | undefined, status: string) {
 
 export async function GET(req: Request) {
   try {
-    const supabase = getSupabaseAdmin();
+    const supabaseAdmin = getSupabaseAdmin();
+    const supabaseAuth = createSupabaseServer();
     const { searchParams } = new URL(req.url);
 
-    // If no user ID is passed, use demo user falmeida
-    const userId = searchParams.get("u") || DEMO_USER_ID;
+    // -----------------------------
+    // 0) Identify logged-in user (via Supabase cookie)
+    // -----------------------------
+    let authedEmail: string | null = null;
+    try {
+      const { data } = await supabaseAuth.auth.getUser();
+      authedEmail = data.user?.email?.toLowerCase() ?? null;
+    } catch {
+      authedEmail = null;
+    }
+
+    const isAdminTester =
+      !!authedEmail && ADMIN_TEST_EMAILS.includes(authedEmail);
+
+    // If no user ID is passed, use demo user OR a special admin ID
+    const userIdParam = searchParams.get("u");
+    const userId =
+      userIdParam || (isAdminTester ? `admin-${authedEmail}` : DEMO_USER_ID);
 
     let usedToday = 0;
     let plan = "free"; // "free" | "personal" | "business" | "agency"
     let status = "inactive"; // "active" | "incomplete" | etc.
+    let resetAtISO: string | null = null;
 
     // -----------------------------
-    // 1) Read subscription (if exists)
+    // 1) Read subscription (if exists) UNLESS we're admin test
     // -----------------------------
-    try {
-      const { data: sub } = await supabase
-        .from("proscan_subscriptions")
-        .select("plan,status,current_period_end")
-        .eq("user_id", userId)
-        .maybeSingle();
+    if (isAdminTester) {
+      // Force highest tier for admin test account
+      plan = "agency";
+      status = "active";
+    } else {
+      try {
+        const { data: sub } = await supabaseAdmin
+          .from("proscan_subscriptions")
+          .select("plan,status,current_period_end")
+          .eq("user_id", userId)
+          .maybeSingle();
 
-      if (sub) {
-        plan = (sub.plan || plan).toLowerCase();
-        status = sub.status || status;
+        if (sub) {
+          plan = (sub.plan || plan).toLowerCase();
+          status = sub.status || status;
+        }
+      } catch {
+        // ignore missing table / schema mismatch
       }
-    } catch {
-      // ignore missing table / schema mismatch
     }
 
-    const limit = computePlanLimit(plan, status);
-    const isPaidActive = status === "active" && plan !== "free";
+    const limit = isAdminTester
+      ? PLAN_LIMITS.agency
+      : computePlanLimit(plan, status);
+
+    const isPaidActive =
+      isAdminTester || (status === "active" && plan !== "free");
 
     // -----------------------------
     // 2) Read / upsert usage today
     // -----------------------------
-    let resetAtISO: string | null = null;
-
     try {
       const now = new Date();
       const resetAt = new Date(now);
@@ -110,7 +137,7 @@ export async function GET(req: Request) {
       resetAt.setUTCHours(24, 0, 0, 0);
       resetAtISO = resetAt.toISOString();
 
-      const { data: usage } = await supabase
+      const { data: usage } = await supabaseAdmin
         .from("proscan_usage")
         .select("used_today, reset_at, limit")
         .eq("user_id", userId)
@@ -128,7 +155,7 @@ export async function GET(req: Request) {
       }
 
       // Keep row in sync with the correct limit + resetAt
-      await supabase.from("proscan_usage").upsert({
+      await supabaseAdmin.from("proscan_usage").upsert({
         user_id: userId,
         used_today: usedToday,
         limit,
@@ -138,37 +165,11 @@ export async function GET(req: Request) {
       // ignore missing usage table
     }
 
-    let remaining = Math.max(limit - usedToday, 0);
+    const remaining = Math.max(limit - usedToday, 0);
 
-    // -----------------------------
-    // 3) Admin override (for your own test account)
-    // -----------------------------
-    const isAdmin = ADMIN_USER_ID && userId === ADMIN_USER_ID;
-
-    if (isAdmin) {
-      const adminLimit = Number(
-        process.env.PROSCAN_ADMIN_DAILY_LIMIT ?? 999
-      );
-
-      return NextResponse.json({
-        userId,
-        plan: "agency",
-        status: "active",
-        limit: adminLimit,
-        usedToday: 0,
-        remaining: adminLimit,
-        resetAt: resetAtISO,
-        isPro: true,
-        demoUser: false,
-        adminUser: true,
-      });
-    }
-
-    // -----------------------------
-    // 4) Normal response
-    // -----------------------------
     return NextResponse.json({
       userId,
+      email: authedEmail,
       plan, // "free" | "personal" | "business" | "agency"
       status, // Billing status from proscan_subscriptions
       limit, // Daily Pro Scan limit for this tier
@@ -177,11 +178,12 @@ export async function GET(req: Request) {
       resetAt: resetAtISO,
       isPro: isPaidActive,
       demoUser: userId === DEMO_USER_ID,
+      adminTester: isAdminTester,
     });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "Quota check failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
