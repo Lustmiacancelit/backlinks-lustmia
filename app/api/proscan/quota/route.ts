@@ -6,26 +6,8 @@ export const runtime = "nodejs";
 // Demo user (falmeida)
 const DEMO_USER_ID = "9b7e2a2a-7f2f-4f6a-9d9e-falmeida000001";
 
-function getSupabaseAdmin() {
-  // Prefer server env, fallback to NEXT_PUBLIC for safety
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE ||
-    process.env.SUPABASE_SERVICE;
-
-  if (!url || !key) {
-    throw new Error(
-      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY"
-    );
-  }
-
-  return createClient(url, key, {
-    auth: { persistSession: false },
-  });
-}
+// Optional: admin / test user ID for full Agency access
+const ADMIN_USER_ID = process.env.PROSCAN_ADMIN_USER_ID || "";
 
 /**
  * Plan → daily Pro Scan limits.
@@ -49,6 +31,27 @@ const PLAN_LIMITS: Record<string, number> = {
   agency: Number(process.env.PROSCAN_LIMIT_AGENCY ?? 40),
 };
 
+function getSupabaseAdmin() {
+  // Prefer server env, fallback to NEXT_PUBLIC for safety
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE;
+
+  if (!url || !key) {
+    throw new Error(
+      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY"
+    );
+  }
+
+  return createClient(url, key, {
+    auth: { persistSession: false },
+  });
+}
+
 function computePlanLimit(planRaw: string | null | undefined, status: string) {
   const plan = (planRaw || "free").toLowerCase();
 
@@ -71,8 +74,8 @@ export async function GET(req: Request) {
     const userId = searchParams.get("u") || DEMO_USER_ID;
 
     let usedToday = 0;
-    let plan = "free";         // "free" | "personal" | "business" | "agency"
-    let status = "inactive";   // "active" | "incomplete" | etc.
+    let plan = "free"; // "free" | "personal" | "business" | "agency"
+    let status = "inactive"; // "active" | "incomplete" | etc.
 
     // -----------------------------
     // 1) Read subscription (if exists)
@@ -135,13 +138,40 @@ export async function GET(req: Request) {
       // ignore missing usage table
     }
 
-    const remaining = Math.max(limit - usedToday, 0);
+    let remaining = Math.max(limit - usedToday, 0);
 
+    // -----------------------------
+    // 3) Admin override (for your own test account)
+    // -----------------------------
+    const isAdmin = ADMIN_USER_ID && userId === ADMIN_USER_ID;
+
+    if (isAdmin) {
+      const adminLimit = Number(
+        process.env.PROSCAN_ADMIN_DAILY_LIMIT ?? 999
+      );
+
+      return NextResponse.json({
+        userId,
+        plan: "agency",
+        status: "active",
+        limit: adminLimit,
+        usedToday: 0,
+        remaining: adminLimit,
+        resetAt: resetAtISO,
+        isPro: true,
+        demoUser: false,
+        adminUser: true,
+      });
+    }
+
+    // -----------------------------
+    // 4) Normal response
+    // -----------------------------
     return NextResponse.json({
       userId,
-      plan,              // "free" | "personal" | "business" | "agency"
-      status,            // Billing status from proscan_subscriptions
-      limit,             // Daily Pro Scan limit for this tier
+      plan, // "free" | "personal" | "business" | "agency"
+      status, // Billing status from proscan_subscriptions
+      limit, // Daily Pro Scan limit for this tier
       usedToday,
       remaining,
       resetAt: resetAtISO,
