@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import type { ReactNode } from "react";
@@ -34,18 +35,31 @@ export default function DashboardLayout({
   // derive an active key from pathname if not explicitly passed
   const derivedActive =
     active ||
-    (navItems.find((item) => pathname?.startsWith(item.href))?.key ??
-      "overview");
+    (navItems.find((item) => pathname?.startsWith(item.href))?.key ?? "overview");
 
   return (
     <div className="min-h-screen bg-[#05030b] text-white flex">
       {/* SIDEBAR */}
       <aside className="hidden md:flex md:flex-col w-64 border-r border-white/10 bg-black/40 backdrop-blur-xl">
         <div className="px-5 py-4 border-b border-white/10">
-          <div className="text-xs uppercase tracking-[0.2em] text-white/40">
-            LustMia
-          </div>
-          <div className="font-semibold text-lg mt-1">Backlink Studio</div>
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <Image
+              src="/lustmia-pro-logo.png"
+              alt="Lustmia Pro"
+              width={32}
+              height={32}
+              priority
+              className="rounded-md"
+            />
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-white/40">
+                Lustmia
+              </div>
+              <div className="font-semibold text-lg leading-tight">
+                Backlink Studio
+              </div>
+            </div>
+          </Link>
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
@@ -75,30 +89,44 @@ export default function DashboardLayout({
         {/* TOP BAR */}
         <header className="sticky top-0 z-20 border-b border-white/10 bg-black/60 backdrop-blur-xl">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-            {/* Mobile brand / nav toggle placeholder */}
-            <div className="md:hidden">
-              <div className="text-xs uppercase tracking-[0.2em] text-white/40">
-                LustMia
+            {/* Left: logo + contextual text */}
+            <div className="flex items-center gap-3 min-w-0">
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 flex-shrink-0"
+              >
+                <Image
+                  src="/lustmia-pro-logo.png"
+                  alt="Lustmia Pro"
+                  width={28}
+                  height={28}
+                  priority
+                  className="rounded-md"
+                />
+                <span className="hidden sm:inline text-sm font-semibold tracking-wide">
+                  Lustmia Pro
+                </span>
+              </Link>
+
+              {/* Context text (desktop only) */}
+              <div className="hidden md:block text-xs text-white/60 truncate">
+                {derivedActive === "overview" && "Overview of your backlinks."}
+                {derivedActive === "backlink-explorer" &&
+                  "Inspect individual backlinks & anchors."}
+                {derivedActive === "clients" &&
+                  "Manage agency / client workspaces."}
+                {derivedActive === "competitors" &&
+                  "Compare your authority with competitors."}
+                {derivedActive === "toxic-links" &&
+                  "Find and handle spammy / risky links."}
+                {derivedActive === "billing" &&
+                  "Plan, invoices and subscription."}
+                {derivedActive === "settings" &&
+                  "Workspace and account preferences."}
               </div>
-              <div className="font-semibold text-base">Backlink Studio</div>
             </div>
 
-            <div className="hidden md:block text-xs text-white/60">
-              {derivedActive === "overview" && "Overview of your backlinks."}
-              {derivedActive === "backlink-explorer" &&
-                "Inspect individual backlinks & anchors."}
-              {derivedActive === "clients" &&
-                "Manage agency / client workspaces."}
-              {derivedActive === "competitors" &&
-                "Compare your authority with competitors."}
-              {derivedActive === "toxic-links" &&
-                "Find and handle spammy / risky links."}
-              {derivedActive === "billing" &&
-                "Plan, invoices and subscription."}
-              {derivedActive === "settings" &&
-                "Workspace and account preferences."}
-            </div>
-
+            {/* Right: plan + upgrade button */}
             <div className="flex items-center gap-2">
               <span className="hidden sm:inline text-xs text-white/60">
                 Plan: <span className="uppercase">Free</span>
