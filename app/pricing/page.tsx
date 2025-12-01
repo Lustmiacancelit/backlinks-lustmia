@@ -253,14 +253,15 @@ export default function PricingPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* UPDATED: both go to /dashboard */}
             <button
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/dashboard")}
               className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm"
             >
               Back to home
             </button>
             <button
-              onClick={() => router.push("/login")}
+              onClick={() => router.push("/dashboard")}
               className="px-4 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-sm font-semibold"
             >
               Log in
