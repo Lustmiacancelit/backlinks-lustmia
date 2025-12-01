@@ -1,8 +1,10 @@
 "use client";
 
+import DashboardLayout from "@/components/DashboardLayout";
+
 export default function BacklinkExplorerPage() {
   return (
-    <>
+    <DashboardLayout active="backlink-explorer">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
@@ -33,9 +35,7 @@ export default function BacklinkExplorerPage() {
             </thead>
             <tbody>
               <tr className="border-b border-white/5">
-                <td className="py-2">
-                  blog.example.com/seo-guide
-                </td>
+                <td className="py-2">blog.example.com/seo-guide</td>
                 <td className="py-2 text-white/70">
                   lustmia backlinks checker
                 </td>
@@ -52,6 +52,6 @@ export default function BacklinkExplorerPage() {
           </table>
         </div>
       </section>
-    </>
+    </DashboardLayout>
   );
 }

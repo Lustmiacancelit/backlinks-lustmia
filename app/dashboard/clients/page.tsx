@@ -1,8 +1,10 @@
 "use client";
 
+import DashboardLayout from "@/components/DashboardLayout";
+
 export default function ClientsPage() {
   return (
-    <>
+    <DashboardLayout active="clients">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
@@ -44,6 +46,6 @@ export default function ClientsPage() {
           </table>
         </div>
       </section>
-    </>
+    </DashboardLayout>
   );
 }

@@ -1,10 +1,11 @@
 "use client";
 
+import DashboardLayout from "@/components/DashboardLayout";
 import Link from "next/link";
 
 export default function BillingPage() {
   return (
-    <>
+    <DashboardLayout active="billing">
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
@@ -39,6 +40,6 @@ export default function BillingPage() {
           </p>
         </div>
       </section>
-    </>
+    </DashboardLayout>
   );
 }
