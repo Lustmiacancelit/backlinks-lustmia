@@ -1,6 +1,5 @@
 "use client";
 
-
 import DashboardLayout from "@/components/DashboardLayout";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -98,7 +97,13 @@ const mockTrend = [
 const mockScans = [
   { domain: "lustmia.com", links: 124, ref: 38, change: +6, time: "2h ago" },
   { domain: "example.com", links: 58, ref: 17, change: -2, time: "Yesterday" },
-  { domain: "competitor.io", links: 201, ref: 64, change: +12, time: "2 days ago" },
+  {
+    domain: "competitor.io",
+    links: 201,
+    ref: 64,
+    change: +12,
+    time: "2 days ago",
+  },
 ];
 
 function getOrCreateUserId() {
@@ -124,36 +129,48 @@ export default function Dashboard() {
   const [recentScans, setRecentScans] = useState<any[]>([]);
 
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // INTERNAL OVERRIDE: treat sales@lustmia.com as “always Pro”
+  const isInternal =
+    userEmail?.toLowerCase() === "sales@lustmia.com" ||
+    userEmail?.toLowerCase() === "sales@lustmia.com.br"; // add variations if you want
 
   const remaining = quota?.remaining ?? 0;
-  const planName = quota?.plan ?? "free";
-  const isProUser = !!quota?.isPro;
-  const canUseProScan = isProUser && remaining > 0;
+  const planName = quota?.plan ?? (isInternal ? "internal" : "free");
+  const isProUser = !!quota?.isPro || isInternal;
+
+  // Internal user can always use Pro Scan (ignore remaining)
+  const canUseProScan = isInternal || (isProUser && remaining > 0);
 
   useEffect(() => {
-    supabaseBrowserClient.auth.getUser().then(({ data, error }) => {
-      if (error || !data.user) return;
+    supabaseBrowserClient
+      .auth
+      .getUser()
+      .then(({ data, error }) => {
+        if (error || !data.user) return;
 
-      const user = data.user;
-      const meta: any = user.user_metadata || {};
-      const email = user.email || "";
+        const user = data.user;
+        const meta: any = user.user_metadata || {};
+        const email = user.email || "";
+        setUserEmail(email || null); // <— store email for internal override
 
-      const first =
-        meta.first_name ||
-        meta.firstName ||
-        meta.given_name ||
-        (meta.full_name ? String(meta.full_name).split(" ")[0] : "");
-      const last =
-        meta.last_name ||
-        meta.lastName ||
-        meta.family_name ||
-        (meta.full_name
-          ? String(meta.full_name).split(" ").slice(1).join(" ")
-          : "");
+        const first =
+          meta.first_name ||
+          meta.firstName ||
+          meta.given_name ||
+          (meta.full_name ? String(meta.full_name).split(" ")[0] : "");
+        const last =
+          meta.last_name ||
+          meta.lastName ||
+          meta.family_name ||
+          (meta.full_name
+            ? String(meta.full_name).split(" ").slice(1).join(" ")
+            : "");
 
-      const name = `${first || ""} ${last || ""}`.trim() || email || null;
-      if (name) setDisplayName(name);
-    });
+        const name = `${first || ""} ${last || ""}`.trim() || email || null;
+        if (name) setDisplayName(name);
+      });
 
     const id = getOrCreateUserId();
     setUserId(id);
@@ -174,6 +191,11 @@ export default function Dashboard() {
 
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
+
+    // INTERNAL: sales@lustmia.com bypasses quota checks completely
+    if (isInternal) {
+      return true;
+    }
 
     const r = await fetch(`/api/proscan/quota?u=${userId}`);
     const d = await r.json().catch(() => ({}));
@@ -235,7 +257,7 @@ export default function Dashboard() {
       setResult(data);
       setMode(effectiveMode);
 
-      if (effectiveMode === "pro") {
+      if (effectiveMode === "pro" && !isInternal) {
         fetch(`/api/proscan/quota?u=${userId}`)
           .then((r) => r.json())
           .then((d) => {
@@ -283,7 +305,8 @@ export default function Dashboard() {
             Backlinks Dashboard
           </h1>
           <p className="text-white/60 text-sm">
-            Track backlinks, referring domains, toxicity & growth — Lustmia style.
+            Track backlinks, referring domains, toxicity & growth — Lustmia
+            style.
           </p>
         </div>
 
@@ -300,7 +323,6 @@ export default function Dashboard() {
       {/* QUICK SCAN */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="font-semibold flex items-center gap-2">
@@ -321,7 +343,9 @@ export default function Dashboard() {
               </span>
 
               <span className="px-2 py-1 rounded-lg bg-white/5 border border-white/10">
-                {isProUser ? (
+                {isInternal ? (
+                  <>Internal account · unlimited testing</>
+                ) : isProUser ? (
                   <>
                     Pro scans left today: <b>{remaining}</b>
                   </>
@@ -362,18 +386,16 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={() => runScan("pro")}
-              disabled={loading || !canUseProScan}
+              disabled={loading || (!canUseProScan && !isInternal)}
               className={clsx(
                 "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
-                !canUseProScan
+                !canUseProScan && !isInternal
                   ? "bg-white/5 border border-white/10 text-white/40 cursor-not-allowed"
                   : "bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90"
               )}
             >
               <Zap className="h-4 w-4" />
-              {!canUseProScan
-                ? "Upgrade to use Pro Scan"
-                : loading && mode === "pro"
+              {loading && mode === "pro"
                 ? "Pro Scanning..."
                 : "Pro Scan"}
             </button>
@@ -392,7 +414,9 @@ export default function Dashboard() {
               <MiniStat label="Toxic (est.)" value={kpis.toxic} />
 
               <div className="md:col-span-3 mt-2">
-                <div className="text-xs text-white/60 mb-1">Sample backlinks</div>
+                <div className="text-xs text-white/60 mb-1">
+                  Sample backlinks
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {result.sample.map((s, i) => (
                     <a
@@ -462,7 +486,6 @@ export default function Dashboard() {
 
       {/* CHART + TABLE */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-
         {/* Trend Chart */}
         <div className="xl:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
@@ -561,9 +584,7 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    <div className="text-xs text-white/50">
-                      {timeLabel}
-                    </div>
+                    <div className="text-xs text-white/50">{timeLabel}</div>
                   </div>
                 </div>
               );
@@ -578,9 +599,7 @@ export default function Dashboard() {
         {/* Table */}
         <div className="xl:col-span-3 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
-            <div className="font-semibold">
-              Backlink Explorer (Top Domains)
-            </div>
+            <div className="font-semibold">Backlink Explorer (Top Domains)</div>
             <div className="text-xs text-white/60">Deep crawl in Pro</div>
           </div>
 
