@@ -1,5 +1,7 @@
 "use client";
 
+
+import DashboardLayout from "@/components/DashboardLayout";
 import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
@@ -268,7 +270,7 @@ export default function Dashboard() {
   }, [result]);
 
   return (
-    <>
+    <DashboardLayout active="overview">
       {/* TOPBAR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
@@ -626,7 +628,7 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
-    </>
+    </DashboardLayout>
   );
 }
 

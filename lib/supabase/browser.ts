@@ -12,5 +12,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// Shared browser client for magic links, etc.
-export const supabaseBrowserClient = createClient(supabaseUrl, supabaseAnonKey);
+// Shared browser client for magic links, OAuth, etc.
+export const supabaseBrowserClient = createClient(
+  supabaseUrl,
+  supabaseAnonKey
+);
