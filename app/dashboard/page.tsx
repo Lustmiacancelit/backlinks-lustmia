@@ -22,15 +22,58 @@ import {
   ArrowDownRight,
   ExternalLink,
   Zap,
+  FileDown,
+  AlertTriangle,
+  Target,
 } from "lucide-react";
 import clsx from "clsx";
 import { supabaseBrowserClient } from "@/lib/supabase/browser"; // Supabase
 
+/* ---------- types from API ---------- */
+
+type LinkType =
+  | "editorial"
+  | "directory"
+  | "social"
+  | "forum"
+  | "ugc"
+  | "sponsored"
+  | "news"
+  | "wiki"
+  | "edu"
+  | "gov"
+  | "ecommerce"
+  | "other";
+
+type LinkDetail = {
+  source_page: string;
+  target_url: string;
+  target_domain: string;
+  anchor_text: string | null;
+  rel: string | null;
+  nofollow: boolean;
+  sponsored: boolean;
+  ugc: boolean;
+  link_type: LinkType;
+};
+
+type AiLinkInsight = {
+  target_url: string;
+  target_domain: string;
+  anchor_text: string | null;
+  link_type: LinkType;
+  toxicity: "low" | "medium" | "high";
+  spam_risk: number;
+  anchor_category: "branded" | "generic" | "money" | "cta" | "other";
+  note?: string;
+};
+
 type AiInsights = {
-  summary?: string;
-  toxicityNotes?: string;
-  outreachIdeas?: string[];
-  competitorGaps?: string[];
+  summary: string;
+  toxicityNotes: string | string[]; // can be single string or list
+  outreachIdeas: string | string[]; // defensive union
+  competitorGaps: string | string[]; // defensive union
+  linkInsights: AiLinkInsight[];
 };
 
 type BacklinkResult = {
@@ -38,7 +81,13 @@ type BacklinkResult = {
   totalBacklinks: number;
   refDomains: number;
   sample: string[];
-  aiInsights?: AiInsights; // optional AI insights from /api/backlinks
+
+  pagesCrawled: number;
+  uniqueOutbound: number;
+  linksDetailed: LinkDetail[];
+  errors: string[];
+
+  aiInsights?: AiInsights | null;
 };
 
 type Mode = "mvp" | "pro";
@@ -90,6 +139,28 @@ function normalizeQuota(d: any): Quota | null {
   }
 
   return null;
+}
+
+/**
+ * Safely normalize any AI field (string | string[] | undefined) into string[]
+ * so we can always `.map` without crashing.
+ */
+function normalizeList(
+  value: string | string[] | null | undefined
+): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((v) => typeof v === "string" && v.trim().length > 0);
+  }
+
+  if (typeof value === "string") {
+    // Split on newlines/bullets/dashed lists into separate items
+    return value
+      .split(/\r?\n|•|-|\d+\./g)
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+  }
+
+  return [];
 }
 
 const mockTrend = [
@@ -152,33 +223,30 @@ export default function Dashboard() {
   const canUseProScan = isInternal || (isProUser && remaining > 0);
 
   useEffect(() => {
-    supabaseBrowserClient
-      .auth
-      .getUser()
-      .then(({ data, error }) => {
-        if (error || !data.user) return;
+    supabaseBrowserClient.auth.getUser().then(({ data, error }) => {
+      if (error || !data.user) return;
 
-        const user = data.user;
-        const meta: any = user.user_metadata || {};
-        const email = user.email || "";
-        setUserEmail(email || null); // <— store email for internal override
+      const user = data.user;
+      const meta: any = user.user_metadata || {};
+      const email = user.email || "";
+      setUserEmail(email || null); // store email for internal override
 
-        const first =
-          meta.first_name ||
-          meta.firstName ||
-          meta.given_name ||
-          (meta.full_name ? String(meta.full_name).split(" ")[0] : "");
-        const last =
-          meta.last_name ||
-          meta.lastName ||
-          meta.family_name ||
-          (meta.full_name
-            ? String(meta.full_name).split(" ").slice(1).join(" ")
-            : "");
+      const first =
+        meta.first_name ||
+        meta.firstName ||
+        meta.given_name ||
+        (meta.full_name ? String(meta.full_name).split(" ")[0] : "");
+      const last =
+        meta.last_name ||
+        meta.lastName ||
+        meta.family_name ||
+        (meta.full_name
+          ? String(meta.full_name).split(" ").slice(1).join(" ")
+          : "");
 
-        const name = `${first || ""} ${last || ""}`.trim() || email || null;
-        if (name) setDisplayName(name);
-      });
+      const name = `${first || ""} ${last || ""}`.trim() || email || null;
+      if (name) setDisplayName(name);
+    });
 
     const id = getOrCreateUserId();
     setUserId(id);
@@ -299,6 +367,29 @@ export default function Dashboard() {
     return { links, ref, toxic, growth };
   }, [result]);
 
+  // Map domain -> AI toxicity + anchor summary (Options 1 & 2)
+  const domainAi = useMemo(() => {
+    const map = new Map<
+      string,
+      { toxicity: AiLinkInsight["toxicity"]; spam_risk: number; anchor_category: string }
+    >();
+    if (!result?.aiInsights?.linkInsights) return map;
+
+    for (const li of result.aiInsights.linkInsights) {
+      const dom = (li.target_domain || safeHost(li.target_url)).toLowerCase();
+      if (!dom) continue;
+      const existing = map.get(dom);
+      if (!existing || li.spam_risk > existing.spam_risk) {
+        map.set(dom, {
+          toxicity: li.toxicity,
+          spam_risk: li.spam_risk,
+          anchor_category: li.anchor_category,
+        });
+      }
+    }
+    return map;
+  }, [result?.aiInsights]);
+
   return (
     <DashboardLayout active="overview">
       {/* TOPBAR */}
@@ -319,7 +410,16 @@ export default function Dashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
+          <button
+            className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10"
+            onClick={() => {
+              // Option 4 – quick PDF via print
+              if (typeof window !== "undefined") {
+                window.print();
+              }
+            }}
+          >
+            <FileDown className="h-4 w-4 mr-1" />
             Export PDF
           </button>
           <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
@@ -403,9 +503,7 @@ export default function Dashboard() {
               )}
             >
               <Zap className="h-4 w-4" />
-              {loading && mode === "pro"
-                ? "Pro Scanning..."
-                : "Pro Scan"}
+              {loading && mode === "pro" ? "Pro Scanning..." : "Pro Scan"}
             </button>
           </form>
 
@@ -439,68 +537,6 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
-
-              {/* AI INSIGHTS PANEL */}
-              {result.aiInsights && (
-                <div className="md:col-span-3 mt-4 rounded-2xl bg-white/5 border border-white/10 p-4">
-                  <h2 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                    <SparklesIcon />
-                    AI Insights
-                  </h2>
-
-                  <div className="space-y-3 text-sm text-white/80">
-                    {result.aiInsights.summary && (
-                      <div>
-                        <div className="font-semibold mb-1 text-white">
-                          Summary
-                        </div>
-                        <p>{result.aiInsights.summary}</p>
-                      </div>
-                    )}
-
-                    {result.aiInsights.toxicityNotes && (
-                      <div>
-                        <div className="font-semibold mb-1 text-white">
-                          Toxicity Notes
-                        </div>
-                        <p>{result.aiInsights.toxicityNotes}</p>
-                      </div>
-                    )}
-
-                    {result.aiInsights.outreachIdeas &&
-                      result.aiInsights.outreachIdeas.length > 0 && (
-                        <div>
-                          <div className="font-semibold mb-1 text-white">
-                            Outreach Ideas
-                          </div>
-                          <ul className="list-disc list-inside space-y-1">
-                            {result.aiInsights.outreachIdeas.map(
-                              (idea, idx) => (
-                                <li key={idx}>{idea}</li>
-                              )
-                            )}
-                          </ul>
-                        </div>
-                      )}
-
-                    {result.aiInsights.competitorGaps &&
-                      result.aiInsights.competitorGaps.length > 0 && (
-                        <div>
-                          <div className="font-semibold mb-1 text-white">
-                            Competitor Gaps
-                          </div>
-                          <ul className="list-disc list-inside space-y-1">
-                            {result.aiInsights.competitorGaps.map(
-                              (gap, idx) => (
-                                <li key={idx}>{gap}</li>
-                              )
-                            )}
-                          </ul>
-                        </div>
-                      )}
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -524,6 +560,78 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
+
+      {/* AI Insights Panel (Options 1–3) */}
+      {result?.aiInsights && (
+        <section className="mb-6 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-pink-500/20 flex items-center justify-center">
+                <SparkleDot />
+              </div>
+              <div>
+                <div className="text-sm font-semibold">AI Insights</div>
+                <div className="text-xs text-white/60">
+                  Summary, toxicity & competitor gaps generated from this scan.
+                </div>
+              </div>
+            </div>
+            <button
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10"
+              onClick={() => {
+                if (typeof window !== "undefined") window.print();
+              }}
+            >
+              <FileDown className="h-3 w-3" />
+              Export summary (PDF)
+            </button>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs md:text-sm">
+            <div>
+              <h3 className="font-semibold mb-1">Summary</h3>
+              <p className="text-white/70 whitespace-pre-line">
+                {result.aiInsights.summary}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold mb-1 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3 text-red-300" />
+                Toxicity Notes
+              </h3>
+              <p className="text-white/70 whitespace-pre-line">
+                {normalizeList(result.aiInsights.toxicityNotes).join("\n")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold mb-1 flex items-center gap-1">
+                <Target className="h-3 w-3 text-emerald-300" />
+                Outreach Ideas
+              </h3>
+              <ul className="list-disc list-inside space-y-0.5 text-white/70">
+                {normalizeList(result.aiInsights.outreachIdeas).map(
+                  (idea, i) => (
+                    <li key={i}>{idea}</li>
+                  )
+                )}
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="font-semibold mb-1">Competitor Gaps</h3>
+              <ul className="list-disc list-inside space-y-0.5 text-white/70">
+                {normalizeList(result.aiInsights.competitorGaps).map(
+                  (gap, i) => (
+                    <li key={i}>{gap}</li>
+                  )
+                )}
+              </ul>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* KPIs */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -670,7 +778,9 @@ export default function Dashboard() {
         <div className="xl:col-span-3 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
             <div className="font-semibold">Backlink Explorer (Top Domains)</div>
-            <div className="text-xs text-white/60">Deep crawl in Pro</div>
+            <div className="text-xs text-white/60">
+              Deep crawl + AI toxicity in Pro
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -680,32 +790,111 @@ export default function Dashboard() {
                   <th className="text-left py-2">Referring Domain</th>
                   <th className="text-left py-2">Links</th>
                   <th className="text-left py-2">Type</th>
+                  <th className="text-left py-2">Anchor profile</th>
+                  <th className="text-left py-2">Toxicity</th>
                   <th className="text-left py-2">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {(result?.sample ?? []).slice(0, 6).map((link, i) => {
-                  const host = safeHost(link);
-                  return (
-                    <tr key={i} className="border-b border-white/5">
-                      <td className="py-2 font-medium">{host}</td>
-                      <td className="py-2">{1 + (i % 4)}</td>
-                      <td className="py-2 text-white/70">
-                        {i % 2 === 0 ? "Editorial" : "Directory"}
-                      </td>
-                      <td className="py-2">
-                        <span className="px-2 py-1 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-400/20">
-                          Active
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {result?.linksDetailed &&
+                  Object.values(
+                    result.linksDetailed.reduce<Record<string, LinkDetail[]>>(
+                      (acc, link) => {
+                        const dom =
+                          link.target_domain || safeHost(link.target_url);
+                        if (!dom) return acc;
+                        if (!acc[dom]) acc[dom] = [];
+                        acc[dom].push(link);
+                        return acc;
+                      },
+                      {}
+                    )
+                  )
+                    .slice(0, 12)
+                    .map((group, i) => {
+                      const first = group[0];
+                      const host =
+                        first.target_domain || safeHost(first.target_url);
+                      const linkCount = group.length;
+
+                      const ai = domainAi.get(host.toLowerCase());
+                      const toxicity = ai?.toxicity;
+                      const spamRisk = ai?.spam_risk ?? 0;
+                      const anchorCat = ai?.anchor_category ?? "mixed";
+
+                      const labelMap: Record<LinkType, string> = {
+                        editorial: "Editorial",
+                        directory: "Directory",
+                        social: "Social",
+                        forum: "Forum / Community",
+                        ugc: "UGC",
+                        sponsored: "Sponsored",
+                        news: "News / Media",
+                        wiki: "Wiki",
+                        edu: "EDU",
+                        gov: "GOV",
+                        ecommerce: "E-commerce",
+                        other: "Other",
+                      };
+
+                      const typeLabel =
+                        labelMap[first.link_type] || "Other";
+
+                      let toxClass =
+                        "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
+                      let toxLabel = "Low";
+
+                      if (toxicity === "medium" || spamRisk >= 40) {
+                        toxClass =
+                          "bg-amber-500/15 text-amber-200 border-amber-400/20";
+                        toxLabel = "Medium";
+                      }
+                      if (toxicity === "high" || spamRisk >= 70) {
+                        toxClass =
+                          "bg-red-500/20 text-red-100 border-red-500/40";
+                        toxLabel = "High";
+                      }
+
+                      return (
+                        <tr key={host + i} className="border-b border-white/5">
+                          <td className="py-2 font-medium">{host}</td>
+                          <td className="py-2">{linkCount}</td>
+                          <td className="py-2 text-white/70">{typeLabel}</td>
+                          <td className="py-2 text-white/70 capitalize">
+                            {anchorCat === "mixed"
+                              ? "Mixed anchors"
+                              : `${anchorCat} anchors`}
+                          </td>
+                          <td className="py-2">
+                            {ai ? (
+                              <span
+                                className={clsx(
+                                  "px-2 py-1 rounded-lg text-xs border inline-flex items-center gap-1",
+                                  toxClass
+                                )}
+                              >
+                                <ShieldAlert className="h-3 w-3" />
+                                {toxLabel} · {spamRisk.toFixed(0)}%
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded-lg text-xs bg-white/5 text-white/70 border border-white/20">
+                                Estimating…
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2">
+                            <span className="px-2 py-1 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-400/20">
+                              Active
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
 
                 {!result && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={6}
                       className="py-8 text-center text-white/50"
                     >
                       Run a Quick Scan to populate results.
@@ -814,9 +1003,11 @@ function safeHost(link: string) {
   }
 }
 
-function SparklesIcon() {
-  // tiny inline icon so we don't need a new lucide import
+function SparkleDot() {
   return (
-    <span className="inline-block w-4 h-4 rounded-full bg-gradient-to-tr from-pink-400 to-fuchsia-300" />
+    <div className="relative">
+      <span className="block w-2 h-2 rounded-full bg-pink-400" />
+      <span className="absolute inset-0 rounded-full bg-pink-400/40 blur-[2px]" />
+    </div>
   );
 }
