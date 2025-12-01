@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browser";
 import { ArrowRight, Link2, Sparkles } from "lucide-react";
@@ -16,6 +16,15 @@ function LoginInner() {
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🔁 If user is already logged in, skip login screen and go to dashboard (or ?next=)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        router.replace(next || "/dashboard");
+      }
+    });
+  }, [router, supabase, next]);
 
   async function onLogin(e: React.FormEvent) {
     e.preventDefault();

@@ -18,6 +18,15 @@ function RegisterInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 🔁 If user is already logged in, skip register screen and go to dashboard
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        router.replace("/dashboard");
+      }
+    });
+  }, [router, supabase]);
+
   // keep input in sync with ?email= if present
   useEffect(() => {
     if (emailFromQuery) {
