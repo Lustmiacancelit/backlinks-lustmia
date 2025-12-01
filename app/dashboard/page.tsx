@@ -23,8 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
-import DashboardLayout from "@/components/DashboardLayout";
-import { supabaseBrowserClient } from "@/lib/supabase/browser"; // ✅ NEW
+import { supabaseBrowserClient } from "@/lib/supabase/browser"; // Supabase
 
 type BacklinkResult = {
   target: string;
@@ -35,11 +34,6 @@ type BacklinkResult = {
 
 type Mode = "mvp" | "pro";
 
-/**
- * Backend /api/proscan/quota returns top-level:
- * { limit, usedToday, remaining, resetAt, isPro, plan, status, demoUser }
- * We support that AND older shapes just in case.
- */
 type Quota = {
   usedToday: number;
   limit: number;
@@ -51,14 +45,10 @@ type Quota = {
   demoUser?: boolean;
 };
 
-// Normalize any quota shape to our Quota type
 function normalizeQuota(d: any): Quota | null {
   if (!d) return null;
-
-  // If some older route wraps as {quota:{...}}
   if (d.quota) d = d.quota;
 
-  // New shape from backend
   if (typeof d.remaining === "number" || typeof d.usedToday === "number") {
     const limit = Number(d.limit || 0);
     const usedToday = Number(d.usedToday || 0);
@@ -79,7 +69,6 @@ function normalizeQuota(d: any): Quota | null {
     };
   }
 
-  // Very old shape: {used, limit, resetAt}
   if (typeof d.used === "number") {
     const limit = Number(d.limit || 0);
     const usedToday = Number(d.used || 0);
@@ -130,22 +119,16 @@ export default function Dashboard() {
 
   const [userId, setUserId] = useState("anon");
   const [quota, setQuota] = useState<Quota | null>(null);
-
-  // real recent scans list
   const [recentScans, setRecentScans] = useState<any[]>([]);
 
-  // ✅ NEW: greeting for the logged-in Supabase user
   const [displayName, setDisplayName] = useState<string | null>(null);
 
-  // Use backend-provided remaining
   const remaining = quota?.remaining ?? 0;
   const planName = quota?.plan ?? "free";
   const isProUser = !!quota?.isPro;
   const canUseProScan = isProUser && remaining > 0;
 
-  // Load supabase user + userId + quota + recent scans
   useEffect(() => {
-    // ✅ get Supabase auth user for greeting
     supabaseBrowserClient.auth.getUser().then(({ data, error }) => {
       if (error || !data.user) return;
 
@@ -173,7 +156,6 @@ export default function Dashboard() {
     const id = getOrCreateUserId();
     setUserId(id);
 
-    // Backend expects ?u= not ?userId=
     fetch(`/api/proscan/quota?u=${id}`)
       .then((r) => r.json())
       .then((d) => {
@@ -182,14 +164,12 @@ export default function Dashboard() {
       })
       .catch(() => {});
 
-    // load recent scans from Supabase
     fetch(`/api/scans/recent?u=${id}`)
       .then((r) => r.json())
       .then((d) => setRecentScans(d.scans || []))
       .catch(() => {});
   }, []);
 
-  // Pro Scan gating using GET quota
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
 
@@ -204,23 +184,19 @@ export default function Dashboard() {
       return false;
     }
 
-    // Only paid, active plans can use Pro Scan
     if (!q?.isPro) {
       setError("Pro Scan is only available on paid plans. Upgrade to unlock.");
       return false;
     }
 
     if ((q.remaining ?? 0) <= 0) {
-      setError(
-        "Pro Scan limit reached for today. Upgrade your plan or wait until your quota resets."
-      );
+      setError("Pro Scan limit reached for today.");
       return false;
     }
 
     return true;
   }
 
-  // allow forcedMode OR form-submit mode
   async function quickScan(e?: React.FormEvent, forcedMode?: Mode) {
     if (e) e.preventDefault();
 
@@ -233,14 +209,12 @@ export default function Dashboard() {
     const cleanedUrl = url.trim();
 
     try {
-      // If Pro Scan, check quota first
       const allowed = await consumeProScanIfNeeded(effectiveMode);
       if (!allowed) return;
 
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // pass userId so backend saves properly
         body: JSON.stringify({ url: cleanedUrl, mode: effectiveMode, userId }),
       });
 
@@ -249,8 +223,7 @@ export default function Dashboard() {
       if (!res.ok) {
         if (res.status === 403 || String(data?.error || "").includes("403")) {
           setError(
-            "Protected site detected. This domain blocks automated crawlers (403). " +
-              "Try Pro Scan or another site."
+            "Protected site detected. Try Pro Scan or a different site."
           );
           return;
         }
@@ -260,7 +233,6 @@ export default function Dashboard() {
       setResult(data);
       setMode(effectiveMode);
 
-      // Refresh quota after a successful Pro Scan
       if (effectiveMode === "pro") {
         fetch(`/api/proscan/quota?u=${userId}`)
           .then((r) => r.json())
@@ -271,7 +243,6 @@ export default function Dashboard() {
           .catch(() => {});
       }
 
-      // Refresh recent scans after any scan
       fetch(`/api/scans/recent?u=${userId}`)
         .then((r) => r.json())
         .then((d) => setRecentScans(d.scans || []))
@@ -283,7 +254,6 @@ export default function Dashboard() {
     }
   }
 
-  // helper that runs scan with a specific mode
   async function runScan(scanMode: Mode) {
     setMode(scanMode);
     await quickScan(undefined, scanMode);
@@ -298,11 +268,10 @@ export default function Dashboard() {
   }, [result]);
 
   return (
-    <DashboardLayout active="overview">
+    <>
       {/* TOPBAR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
-          {/* ✅ NEW greeting */}
           {displayName && (
             <p className="text-sm text-white/70 mb-0.5">
               Hi {displayName} 👋
@@ -312,8 +281,7 @@ export default function Dashboard() {
             Backlinks Dashboard
           </h1>
           <p className="text-white/60 text-sm">
-            Track backlinks, referring domains, toxicity & growth — Lustmia
-            style.
+            Track backlinks, referring domains, toxicity & growth — Lustmia style.
           </p>
         </div>
 
@@ -330,6 +298,7 @@ export default function Dashboard() {
       {/* QUICK SCAN */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="font-semibold flex items-center gap-2">
@@ -337,10 +306,7 @@ export default function Dashboard() {
                 Quick Scan
               </div>
               <div className="text-xs text-white/50 mt-1">
-                Plan:{" "}
-                <span className="uppercase">
-                  {planName}
-                </span>{" "}
+                Plan: <span className="uppercase">{planName}</span>{" "}
                 {isProUser ? "· Pro scans included" : "· Pro scans locked"}
               </div>
             </div>
@@ -364,7 +330,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* form still works via Enter key */}
           <form
             onSubmit={(e) => quickScan(e)}
             className="flex flex-col md:flex-row gap-2"
@@ -378,7 +343,6 @@ export default function Dashboard() {
               onChange={(e) => setUrl(e.target.value)}
             />
 
-            {/* MVP Scan button */}
             <button
               type="button"
               onClick={() => runScan("mvp")}
@@ -393,7 +357,6 @@ export default function Dashboard() {
               {loading && mode === "mvp" ? "Scanning..." : "Scan"}
             </button>
 
-            {/* Pro Scan button */}
             <button
               type="button"
               onClick={() => runScan("pro")}
@@ -425,10 +388,9 @@ export default function Dashboard() {
               <MiniStat label="Backlinks" value={kpis.links} />
               <MiniStat label="Ref. Domains" value={kpis.ref} />
               <MiniStat label="Toxic (est.)" value={kpis.toxic} />
+
               <div className="md:col-span-3 mt-2">
-                <div className="text-xs text-white/60 mb-1">
-                  Sample backlinks
-                </div>
+                <div className="text-xs text-white/60 mb-1">Sample backlinks</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {result.sample.map((s, i) => (
                     <a
@@ -447,7 +409,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* HEALTH / AI PANEL */}
+        {/* Health Panel */}
         <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="font-semibold flex items-center gap-2 mb-3">
             <Activity className="h-4 w-4 text-cyan-300" />
@@ -498,13 +460,12 @@ export default function Dashboard() {
 
       {/* CHART + TABLE */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Trend chart */}
+
+        {/* Trend Chart */}
         <div className="xl:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
             <div className="font-semibold">Backlink Growth (7 days)</div>
-            <div className="text-xs text-white/60">
-              Auto-updates in Pro
-            </div>
+            <div className="text-xs text-white/60">Auto-updates in Pro</div>
           </div>
 
           <div className="h-64">
@@ -555,7 +516,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Recent scans */}
+        {/* Recent Scans */}
         <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="font-semibold mb-3">Recent Scans</div>
 
@@ -580,7 +541,6 @@ export default function Dashboard() {
                   </div>
 
                   <div className="text-right">
-                    {/* keep mock change arrows when mock data is shown */}
                     {typeof s.change === "number" && (
                       <div
                         className={clsx(
@@ -666,7 +626,7 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
-    </DashboardLayout>
+    </>
   );
 }
 
