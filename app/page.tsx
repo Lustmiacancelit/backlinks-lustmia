@@ -10,11 +10,17 @@ import {
   ShieldCheck,
   Globe,
 } from "lucide-react";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function HomePage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle",
+  );
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // used by navbar Sign In / Sign Up → go to /login
   function goToLogin() {
     const trimmed = email.trim();
     if (trimmed) {
@@ -25,6 +31,50 @@ export default function HomePage() {
       }
     }
     router.push("/login");
+  }
+
+  // used by "Start free scan" → send magic link
+  async function handleStartFreeScan() {
+    const trimmed = email.trim();
+
+    if (!trimmed) {
+      setErrorMsg("Enter your email so we can send you a magic link.");
+      setStatus("error");
+      return;
+    }
+
+    setStatus("sending");
+    setErrorMsg(null);
+
+    // keep existing behaviour: store lead email for pricing / login
+    try {
+      localStorage.setItem("lead_email", trimmed);
+    } catch {
+      // ignore
+    }
+
+    const redirectTo =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/dashboard`
+        : undefined;
+
+    const { error } = await supabaseBrowserClient.auth.signInWithOtp({
+      email: trimmed,
+      options: {
+        emailRedirectTo: redirectTo,
+      },
+    });
+
+    if (error) {
+      console.error(error);
+      setErrorMsg(
+        "Could not send the magic link. Please try again in a moment.",
+      );
+      setStatus("error");
+      return;
+    }
+
+    setStatus("sent");
   }
 
   return (
@@ -137,10 +187,11 @@ export default function HomePage() {
 
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
-                  onClick={goToLogin}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold"
+                  onClick={handleStartFreeScan}
+                  disabled={status === "sending"}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold disabled:opacity-60"
                 >
-                  Start free scan
+                  {status === "sending" ? "Sending magic link..." : "Start free scan"}
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
@@ -160,6 +211,16 @@ export default function HomePage() {
                 We&apos;ll email you a magic link. No passwords. Free tier
                 includes limited scans so you can try it safely.
               </p>
+
+              {status === "sent" && (
+                <p className="text-[11px] text-emerald-300">
+                  Magic link sent! Check your inbox to open your dashboard.
+                </p>
+              )}
+
+              {errorMsg && status !== "sent" && (
+                <p className="text-[11px] text-red-300">{errorMsg}</p>
+              )}
             </div>
           </div>
 

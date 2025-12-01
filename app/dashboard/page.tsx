@@ -17,17 +17,14 @@ import {
   ShieldAlert,
   TrendingUp,
   Globe,
-  BarChart3,
-  Settings,
-  CreditCard,
-  Users,
-  Sparkles,
   ArrowUpRight,
   ArrowDownRight,
   ExternalLink,
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
+import DashboardLayout from "@/components/DashboardLayout";
+import { supabaseBrowserClient } from "@/lib/supabase/browser"; // ✅ NEW
 
 type BacklinkResult = {
   target: string;
@@ -134,21 +131,49 @@ export default function Dashboard() {
   const [userId, setUserId] = useState("anon");
   const [quota, setQuota] = useState<Quota | null>(null);
 
-  // ✅ NEW: real recent scans list
+  // real recent scans list
   const [recentScans, setRecentScans] = useState<any[]>([]);
 
-  // ✅ Use backend-provided remaining
+  // ✅ NEW: greeting for the logged-in Supabase user
+  const [displayName, setDisplayName] = useState<string | null>(null);
+
+  // Use backend-provided remaining
   const remaining = quota?.remaining ?? 0;
   const planName = quota?.plan ?? "free";
   const isProUser = !!quota?.isPro;
   const canUseProScan = isProUser && remaining > 0;
 
-  // Load userId + quota + recent scans
+  // Load supabase user + userId + quota + recent scans
   useEffect(() => {
+    // ✅ get Supabase auth user for greeting
+    supabaseBrowserClient.auth.getUser().then(({ data, error }) => {
+      if (error || !data.user) return;
+
+      const user = data.user;
+      const meta: any = user.user_metadata || {};
+      const email = user.email || "";
+
+      const first =
+        meta.first_name ||
+        meta.firstName ||
+        meta.given_name ||
+        (meta.full_name ? String(meta.full_name).split(" ")[0] : "");
+      const last =
+        meta.last_name ||
+        meta.lastName ||
+        meta.family_name ||
+        (meta.full_name
+          ? String(meta.full_name).split(" ").slice(1).join(" ")
+          : "");
+
+      const name = `${first || ""} ${last || ""}`.trim() || email || null;
+      if (name) setDisplayName(name);
+    });
+
     const id = getOrCreateUserId();
     setUserId(id);
 
-    // ✅ Backend expects ?u= not ?userId=
+    // Backend expects ?u= not ?userId=
     fetch(`/api/proscan/quota?u=${id}`)
       .then((r) => r.json())
       .then((d) => {
@@ -157,14 +182,14 @@ export default function Dashboard() {
       })
       .catch(() => {});
 
-    // ✅ NEW: load recent scans from Supabase
+    // load recent scans from Supabase
     fetch(`/api/scans/recent?u=${id}`)
       .then((r) => r.json())
       .then((d) => setRecentScans(d.scans || []))
       .catch(() => {});
   }, []);
 
-  // ✅ Pro Scan gating using GET quota (no POST consume route exists)
+  // Pro Scan gating using GET quota
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
 
@@ -179,7 +204,7 @@ export default function Dashboard() {
       return false;
     }
 
-    // ❗ Only paid, active plans can use Pro Scan
+    // Only paid, active plans can use Pro Scan
     if (!q?.isPro) {
       setError("Pro Scan is only available on paid plans. Upgrade to unlock.");
       return false;
@@ -215,7 +240,7 @@ export default function Dashboard() {
       const res = await fetch("/api/backlinks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // ✅ pass userId so backend saves properly
+        // pass userId so backend saves properly
         body: JSON.stringify({ url: cleanedUrl, mode: effectiveMode, userId }),
       });
 
@@ -235,7 +260,7 @@ export default function Dashboard() {
       setResult(data);
       setMode(effectiveMode);
 
-      // ✅ Refresh quota after a successful Pro Scan so button count updates
+      // Refresh quota after a successful Pro Scan
       if (effectiveMode === "pro") {
         fetch(`/api/proscan/quota?u=${userId}`)
           .then((r) => r.json())
@@ -246,7 +271,7 @@ export default function Dashboard() {
           .catch(() => {});
       }
 
-      // ✅ Refresh recent scans after any scan
+      // Refresh recent scans after any scan
       fetch(`/api/scans/recent?u=${userId}`)
         .then((r) => r.json())
         .then((d) => setRecentScans(d.scans || []))
@@ -273,456 +298,379 @@ export default function Dashboard() {
   }, [result]);
 
   return (
-    <div className="min-h-screen bg-[#05060A] text-white">
-      {/* background glow */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute -top-32 -left-32 h-[420px] w-[420px] rounded-full blur-[120px] opacity-40 bg-fuchsia-600" />
-        <div className="absolute top-1/3 -right-40 h-[520px] w-[520px] rounded-full blur-[140px] opacity-30 bg-cyan-500" />
-        <div className="absolute bottom-[-220px] left-1/3 h-[520px] w-[520px] rounded-full blur-[160px] opacity-30 bg-purple-700" />
+    <DashboardLayout active="overview">
+      {/* TOPBAR */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div>
+          {/* ✅ NEW greeting */}
+          {displayName && (
+            <p className="text-sm text-white/70 mb-0.5">
+              Hi {displayName} 👋
+            </p>
+          )}
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+            Backlinks Dashboard
+          </h1>
+          <p className="text-white/60 text-sm">
+            Track backlinks, referring domains, toxicity & growth — Lustmia
+            style.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
+            Export PDF
+          </button>
+          <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
+            Alerts
+          </button>
+        </div>
       </div>
 
-      <div className="relative flex">
-        {/* SIDEBAR */}
-        <aside className="hidden md:flex md:w-64 lg:w-72 h-screen sticky top-0 border-r border-white/5 bg-black/30 backdrop-blur-xl">
-          <div className="flex flex-col w-full p-5">
-            <div className="flex items-center gap-2 mb-8">
-              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-pink-500 via-fuchsia-500 to-indigo-500 grid place-items-center">
-                <Link2 className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="font-bold text-lg leading-5">Lustmia</div>
-                <div className="text-xs text-white/60">Backlinks SaaS</div>
-              </div>
-            </div>
-
-            <nav className="space-y-1 text-sm">
-              <SideItem icon={<BarChart3 className="h-4 w-4" />} label="Overview" active />
-              <SideItem icon={<Globe className="h-4 w-4" />} label="Backlink Explorer" />
-              <SideItem icon={<TrendingUp className="h-4 w-4" />} label="Competitors" />
-              <SideItem icon={<ShieldAlert className="h-4 w-4" />} label="Toxic Links" />
-              <SideItem icon={<Users className="h-4 w-4" />} label="Clients" />
-              <SideItem icon={<CreditCard className="h-4 w-4" />} label="Billing" />
-              <SideItem icon={<Settings className="h-4 w-4" />} label="Settings" />
-            </nav>
-
-            <div className="mt-auto pt-6">
-              <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Sparkles className="h-4 w-4 text-pink-400" />
-                  Pro Features
-                </div>
-                <p className="text-xs text-white/70 mt-1">
-                  Unlock deep crawl, history, alerts & white-label reports.
-                </p>
-                <button
-                  className="mt-3 w-full text-sm font-semibold px-3 py-2 rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90"
-                  onClick={() => {
-                    window.location.href = "/pricing";
-                  }}
-                >
-                  Upgrade
-                </button>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* MAIN */}
-        <main className="flex-1 p-4 md:p-6 lg:p-8">
-          {/* TOPBAR */}
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+      {/* QUICK SCAN */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div className="lg:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="flex items-center justify-between mb-3">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-                Backlinks Dashboard
-              </h1>
-              <p className="text-white/60 text-sm">
-                Track backlinks, referring domains, toxicity & growth — Lustmia
-                style.
-              </p>
+              <div className="font-semibold flex items-center gap-2">
+                <Search className="h-4 w-4 text-pink-400" />
+                Quick Scan
+              </div>
+              <div className="text-xs text-white/50 mt-1">
+                Plan:{" "}
+                <span className="uppercase">
+                  {planName}
+                </span>{" "}
+                {isProUser ? "· Pro scans included" : "· Pro scans locked"}
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
-                Export PDF
-              </button>
-              <button className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10">
-                Alerts
-              </button>
+            <div className="text-xs text-white/60 flex flex-col items-end gap-1">
+              <span>
+                {mode === "pro"
+                  ? "Pro Scan — bypass protected sites"
+                  : "MVP v1 — visible outbound links"}
+              </span>
+
+              <span className="px-2 py-1 rounded-lg bg-white/5 border border-white/10">
+                {isProUser ? (
+                  <>
+                    Pro scans left today: <b>{remaining}</b>
+                  </>
+                ) : (
+                  <>Upgrade to unlock Pro Scans</>
+                )}
+              </span>
             </div>
           </div>
 
-          {/* QUICK SCAN */}
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-            <div className="lg:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="font-semibold flex items-center gap-2">
-                    <Search className="h-4 w-4 text-pink-400" />
-                    Quick Scan
-                  </div>
-                  <div className="text-xs text-white/50 mt-1">
-                    Plan:{" "}
-                    <span className="uppercase">
-                      {planName}
-                    </span>{" "}
-                    {isProUser
-                      ? "· Pro scans included"
-                      : "· Pro scans locked"}
-                  </div>
-                </div>
+          {/* form still works via Enter key */}
+          <form
+            onSubmit={(e) => quickScan(e)}
+            className="flex flex-col md:flex-row gap-2"
+          >
+            <input
+              type="url"
+              required
+              placeholder="https://yourdomain.com"
+              className="flex-1 px-4 py-3 rounded-xl bg-[#0A0B11] border border-white/10 focus:outline-none focus:ring-2 focus:ring-pink-500"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
 
-                <div className="text-xs text-white/60 flex flex-col items-end gap-1">
-                  <span>
-                    {mode === "pro"
-                      ? "Pro Scan — bypass protected sites"
-                      : "MVP v1 — visible outbound links"}
-                  </span>
-
-                  <span className="px-2 py-1 rounded-lg bg-white/5 border border-white/10">
-                    {isProUser ? (
-                      <>
-                        Pro scans left today: <b>{remaining}</b>
-                      </>
-                    ) : (
-                      <>Upgrade to unlock Pro Scans</>
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* form still works via Enter key */}
-              <form
-                onSubmit={(e) => quickScan(e)}
-                className="flex flex-col md:flex-row gap-2"
-              >
-                <input
-                  type="url"
-                  required
-                  placeholder="https://yourdomain.com"
-                  className="flex-1 px-4 py-3 rounded-xl bg-[#0A0B11] border border-white/10 focus:outline-none focus:ring-2 focus:ring-pink-500"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                />
-
-                {/* MVP Scan button */}
-                <button
-                  type="button"
-                  onClick={() => runScan("mvp")}
-                  disabled={loading}
-                  className={clsx(
-                    "px-4 py-3 rounded-xl font-semibold border text-sm",
-                    mode === "mvp"
-                      ? "bg-white/10 border-white/20"
-                      : "bg-white/5 border-white/10 hover:bg-white/10"
-                  )}
-                >
-                  {loading && mode === "mvp" ? "Scanning..." : "Scan"}
-                </button>
-
-                {/* Pro Scan button */}
-                <button
-                  type="button"
-                  onClick={() => runScan("pro")}
-                  disabled={loading || !canUseProScan}
-                  className={clsx(
-                    "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
-                    !canUseProScan
-                      ? "bg-white/5 border border-white/10 text-white/40 cursor-not-allowed"
-                      : "bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90"
-                  )}
-                >
-                  <Zap className="h-4 w-4" />
-                  {!canUseProScan
-                    ? "Upgrade to use Pro Scan"
-                    : loading && mode === "pro"
-                    ? "Pro Scanning..."
-                    : "Pro Scan"}
-                </button>
-              </form>
-
-              {error && (
-                <div className="mt-3 text-sm text-red-200 bg-red-900/30 border border-red-700/40 p-3 rounded-xl">
-                  {error}
-                </div>
+            {/* MVP Scan button */}
+            <button
+              type="button"
+              onClick={() => runScan("mvp")}
+              disabled={loading}
+              className={clsx(
+                "px-4 py-3 rounded-xl font-semibold border text-sm",
+                mode === "mvp"
+                  ? "bg-white/10 border-white/20"
+                  : "bg-white/5 border-white/10 hover:bg-white/10"
               )}
+            >
+              {loading && mode === "mvp" ? "Scanning..." : "Scan"}
+            </button>
 
-              {result && (
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <MiniStat label="Backlinks" value={kpis.links} />
-                  <MiniStat label="Ref. Domains" value={kpis.ref} />
-                  <MiniStat label="Toxic (est.)" value={kpis.toxic} />
-                  <div className="md:col-span-3 mt-2">
-                    <div className="text-xs text-white/60 mb-1">
-                      Sample backlinks
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {result.sample.map((s, i) => (
-                        <a
-                          key={i}
-                          href={s}
-                          target="_blank"
-                          className="group text-sm bg-white/5 border border-white/10 rounded-xl p-2 break-all hover:bg-white/10"
-                        >
-                          {s}
-                          <ExternalLink className="inline ml-2 h-3 w-3 opacity-60 group-hover:opacity-100" />
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+            {/* Pro Scan button */}
+            <button
+              type="button"
+              onClick={() => runScan("pro")}
+              disabled={loading || !canUseProScan}
+              className={clsx(
+                "flex items-center gap-2 px-5 py-3 rounded-xl font-semibold",
+                !canUseProScan
+                  ? "bg-white/5 border border-white/10 text-white/40 cursor-not-allowed"
+                  : "bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 hover:opacity-90"
               )}
+            >
+              <Zap className="h-4 w-4" />
+              {!canUseProScan
+                ? "Upgrade to use Pro Scan"
+                : loading && mode === "pro"
+                ? "Pro Scanning..."
+                : "Pro Scan"}
+            </button>
+          </form>
+
+          {error && (
+            <div className="mt-3 text-sm text-red-200 bg-red-900/30 border border-red-700/40 p-3 rounded-xl">
+              {error}
             </div>
+          )}
 
-            {/* HEALTH / AI PANEL */}
-            <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-              <div className="font-semibold flex items-center gap-2 mb-3">
-                <Activity className="h-4 w-4 text-cyan-300" />
-                Site Health (AI)
-              </div>
-
-              <div className="space-y-3">
-                <HealthRow label="Authority Trend" score={76} color="pink" />
-                <HealthRow label="Backlink Velocity" score={68} color="cyan" />
-                <HealthRow label="Spam Risk" score={14} color="red" invert />
-              </div>
-
-              <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70">
-                AI tips unlocked in Pro: toxic detection, outreach suggestions,
-                competitor gaps.
-              </div>
-            </div>
-          </section>
-
-          {/* KPIs */}
-          <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <KPI
-              icon={<Link2 className="h-5 w-5 text-pink-300" />}
-              label="Total Backlinks"
-              value={kpis.links}
-              delta="+12%"
-            />
-            <KPI
-              icon={<Globe className="h-5 w-5 text-indigo-300" />}
-              label="Referring Domains"
-              value={kpis.ref}
-              delta="+5%"
-            />
-            <KPI
-              icon={<ShieldAlert className="h-5 w-5 text-red-300" />}
-              label="Toxic Links"
-              value={kpis.toxic}
-              delta="-2%"
-              negative
-            />
-            <KPI
-              icon={<TrendingUp className="h-5 w-5 text-cyan-300" />}
-              label="Growth Score"
-              value={kpis.growth}
-              delta="+9%"
-            />
-          </section>
-
-          {/* CHART + TABLE */}
-          <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            {/* Trend chart */}
-            <div className="xl:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-              <div className="flex items-center justify-between mb-3">
-                <div className="font-semibold">Backlink Growth (7 days)</div>
-                <div className="text-xs text-white/60">
-                  Auto-updates in Pro
+          {result && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <MiniStat label="Backlinks" value={kpis.links} />
+              <MiniStat label="Ref. Domains" value={kpis.ref} />
+              <MiniStat label="Toxic (est.)" value={kpis.toxic} />
+              <div className="md:col-span-3 mt-2">
+                <div className="text-xs text-white/60 mb-1">
+                  Sample backlinks
                 </div>
-              </div>
-
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={mockTrend}>
-                    <defs>
-                      <linearGradient
-                        id="linksGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor="rgb(236,72,153)"
-                          stopOpacity={0.8}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor="rgb(99,102,241)"
-                          stopOpacity={0.05}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeOpacity={0.1} vertical={false} />
-                    <XAxis
-                      dataKey="day"
-                      tick={{ fill: "rgba(255,255,255,0.6)" }}
-                    />
-                    <YAxis tick={{ fill: "rgba(255,255,255,0.6)" }} />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#0A0B11",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        borderRadius: 12,
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="links"
-                      stroke="rgb(236,72,153)"
-                      fill="url(#linksGradient)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Recent scans */}
-            <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-              <div className="font-semibold mb-3">Recent Scans</div>
-
-              <div className="space-y-2">
-                {(recentScans.length ? recentScans : mockScans).map((s: any) => {
-                  const links = s.total_backlinks ?? s.links ?? 0;
-                  const refs = s.ref_domains ?? s.ref ?? 0;
-                  const timeLabel = s.created_at
-                    ? new Date(s.created_at).toLocaleString()
-                    : s.time;
-
-                  return (
-                    <div
-                      key={`${s.domain}-${timeLabel}`}
-                      className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between"
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {result.sample.map((s, i) => (
+                    <a
+                      key={i}
+                      href={s}
+                      target="_blank"
+                      className="group text-sm bg-white/5 border border-white/10 rounded-xl p-2 break-all hover:bg-white/10"
                     >
-                      <div>
-                        <div className="text-sm font-semibold">{s.domain}</div>
-                        <div className="text-xs text-white/60">
-                          {links} links · {refs} refs
-                        </div>
-                      </div>
+                      {s}
+                      <ExternalLink className="inline ml-2 h-3 w-3 opacity-60 group-hover:opacity-100" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
-                      <div className="text-right">
-                        {/* keep mock change arrows when mock data is shown */}
-                        {typeof s.change === "number" && (
-                          <div
-                            className={clsx(
-                              "text-sm font-semibold flex items-center gap-1 justify-end",
-                              s.change >= 0
-                                ? "text-emerald-300"
-                                : "text-red-300"
-                            )}
-                          >
-                            {s.change >= 0 ? (
-                              <ArrowUpRight className="h-4 w-4" />
-                            ) : (
-                              <ArrowDownRight className="h-4 w-4" />
-                            )}
-                            {Math.abs(s.change)}
-                          </div>
-                        )}
+        {/* HEALTH / AI PANEL */}
+        <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="font-semibold flex items-center gap-2 mb-3">
+            <Activity className="h-4 w-4 text-cyan-300" />
+            Site Health (AI)
+          </div>
 
-                        <div className="text-xs text-white/50">
-                          {timeLabel}
-                        </div>
-                      </div>
+          <div className="space-y-3">
+            <HealthRow label="Authority Trend" score={76} color="pink" />
+            <HealthRow label="Backlink Velocity" score={68} color="cyan" />
+            <HealthRow label="Spam Risk" score={14} color="red" invert />
+          </div>
+
+          <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70">
+            AI tips unlocked in Pro: toxic detection, outreach suggestions,
+            competitor gaps.
+          </div>
+        </div>
+      </section>
+
+      {/* KPIs */}
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <KPI
+          icon={<Link2 className="h-5 w-5 text-pink-300" />}
+          label="Total Backlinks"
+          value={kpis.links}
+          delta="+12%"
+        />
+        <KPI
+          icon={<Globe className="h-5 w-5 text-indigo-300" />}
+          label="Referring Domains"
+          value={kpis.ref}
+          delta="+5%"
+        />
+        <KPI
+          icon={<ShieldAlert className="h-5 w-5 text-red-300" />}
+          label="Toxic Links"
+          value={kpis.toxic}
+          delta="-2%"
+          negative
+        />
+        <KPI
+          icon={<TrendingUp className="h-5 w-5 text-cyan-300" />}
+          label="Growth Score"
+          value={kpis.growth}
+          delta="+9%"
+        />
+      </section>
+
+      {/* CHART + TABLE */}
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Trend chart */}
+        <div className="xl:col-span-2 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-semibold">Backlink Growth (7 days)</div>
+            <div className="text-xs text-white/60">
+              Auto-updates in Pro
+            </div>
+          </div>
+
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={mockTrend}>
+                <defs>
+                  <linearGradient
+                    id="linksGradient"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="0%"
+                      stopColor="rgb(236,72,153)"
+                      stopOpacity={0.8}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor="rgb(99,102,241)"
+                      stopOpacity={0.05}
+                    />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeOpacity={0.1} vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fill: "rgba(255,255,255,0.6)" }}
+                />
+                <YAxis tick={{ fill: "rgba(255,255,255,0.6)" }} />
+                <Tooltip
+                  contentStyle={{
+                    background: "#0A0B11",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 12,
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="links"
+                  stroke="rgb(236,72,153)"
+                  fill="url(#linksGradient)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Recent scans */}
+        <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="font-semibold mb-3">Recent Scans</div>
+
+          <div className="space-y-2">
+            {(recentScans.length ? recentScans : mockScans).map((s: any) => {
+              const links = s.total_backlinks ?? s.links ?? 0;
+              const refs = s.ref_domains ?? s.ref ?? 0;
+              const timeLabel = s.created_at
+                ? new Date(s.created_at).toLocaleString()
+                : s.time;
+
+              return (
+                <div
+                  key={`${s.domain}-${timeLabel}`}
+                  className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-sm font-semibold">{s.domain}</div>
+                    <div className="text-xs text-white/60">
+                      {links} links · {refs} refs
                     </div>
+                  </div>
+
+                  <div className="text-right">
+                    {/* keep mock change arrows when mock data is shown */}
+                    {typeof s.change === "number" && (
+                      <div
+                        className={clsx(
+                          "text-sm font-semibold flex items-center gap-1 justify-end",
+                          s.change >= 0
+                            ? "text-emerald-300"
+                            : "text-red-300"
+                        )}
+                      >
+                        {s.change >= 0 ? (
+                          <ArrowUpRight className="h-4 w-4" />
+                        ) : (
+                          <ArrowDownRight className="h-4 w-4" />
+                        )}
+                        {Math.abs(s.change)}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-white/50">
+                      {timeLabel}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button className="mt-3 w-full text-sm px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10">
+            View All Scans
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="xl:col-span-3 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-semibold">
+              Backlink Explorer (Top Domains)
+            </div>
+            <div className="text-xs text-white/60">Deep crawl in Pro</div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-white/60">
+                <tr className="border-b border-white/10">
+                  <th className="text-left py-2">Referring Domain</th>
+                  <th className="text-left py-2">Links</th>
+                  <th className="text-left py-2">Type</th>
+                  <th className="text-left py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(result?.sample ?? []).slice(0, 6).map((link, i) => {
+                  const host = safeHost(link);
+                  return (
+                    <tr key={i} className="border-b border-white/5">
+                      <td className="py-2 font-medium">{host}</td>
+                      <td className="py-2">{1 + (i % 4)}</td>
+                      <td className="py-2 text-white/70">
+                        {i % 2 === 0 ? "Editorial" : "Directory"}
+                      </td>
+                      <td className="py-2">
+                        <span className="px-2 py-1 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-400/20">
+                          Active
+                        </span>
+                      </td>
+                    </tr>
                   );
                 })}
-              </div>
 
-              <button className="mt-3 w-full text-sm px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10">
-                View All Scans
-              </button>
-            </div>
-
-            {/* Table */}
-            <div className="xl:col-span-3 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
-              <div className="flex items-center justify-between mb-3">
-                <div className="font-semibold">
-                  Backlink Explorer (Top Domains)
-                </div>
-                <div className="text-xs text-white/60">Deep crawl in Pro</div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-white/60">
-                    <tr className="border-b border-white/10">
-                      <th className="text-left py-2">Referring Domain</th>
-                      <th className="text-left py-2">Links</th>
-                      <th className="text-left py-2">Type</th>
-                      <th className="text-left py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(result?.sample ?? []).slice(0, 6).map((link, i) => {
-                      const host = safeHost(link);
-                      return (
-                        <tr key={i} className="border-b border-white/5">
-                          <td className="py-2 font-medium">{host}</td>
-                          <td className="py-2">{1 + (i % 4)}</td>
-                          <td className="py-2 text-white/70">
-                            {i % 2 === 0 ? "Editorial" : "Directory"}
-                          </td>
-                          <td className="py-2">
-                            <span className="px-2 py-1 rounded-lg text-xs bg-emerald-500/15 text-emerald-200 border border-emerald-400/20">
-                              Active
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-
-                    {!result && (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="py-8 text-center text-white/50"
-                        >
-                          Run a Quick Scan to populate results.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-        </main>
-      </div>
-    </div>
+                {!result && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="py-8 text-center text-white/50"
+                    >
+                      Run a Quick Scan to populate results.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </DashboardLayout>
   );
 }
 
 /* ---------- small UI components ---------- */
-
-function SideItem({
-  icon,
-  label,
-  active,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}) {
-  return (
-    <button
-      className={clsx(
-        "w-full flex items-center gap-2 px-3 py-2 rounded-xl transition",
-        active
-          ? "bg-white/10 text-white border border-white/10"
-          : "text-white/70 hover:bg-white/5 hover:text-white"
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
 
 function KPI({
   icon,
