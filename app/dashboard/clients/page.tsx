@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
-import { Plus, Globe2, FileText, Trash2, Edit3 } from "lucide-react";
+import { Plus, Globe2, FileText, Trash2, Edit3, Download } from "lucide-react";
 import clsx from "clsx";
 
 type Client = {
@@ -143,6 +143,48 @@ export default function ClientsPage() {
     setClients((prev) => prev.filter((c) => c.id !== id));
   }
 
+  // --- CSV EXPORT ---
+  function exportCsv() {
+    if (!clients.length) {
+      alert("No clients to export yet.");
+      return;
+    }
+
+    const rows: (string | number)[][] = [
+      ["Client", "Domain", "Plan", "Reports", "Notes"],
+      ...clients.map((c) => [
+        c.name,
+        c.domain,
+        c.plan,
+        c.cadence,
+        c.notes ?? "",
+      ]),
+    ];
+
+    const csv = rows
+      .map((row) =>
+        row
+          .map((field) =>
+            `"${String(field).replace(/"/g, '""')}"`
+          )
+          .join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "lustmia-clients.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <DashboardLayout active="clients">
       {/* Header */}
@@ -156,13 +198,23 @@ export default function ClientsPage() {
           </p>
         </div>
 
-        <button
-          onClick={openNewClient}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 text-sm font-semibold"
-        >
-          <Plus className="h-4 w-4" />
-          New client
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/5 border border-white/15 text-xs md:text-sm hover:bg-white/10"
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
+
+          <button
+            onClick={openNewClient}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 text-sm font-semibold"
+          >
+            <Plus className="h-4 w-4" />
+            New client
+          </button>
+        </div>
       </header>
 
       {/* Info strip */}
@@ -314,7 +366,9 @@ export default function ClientsPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs text-white/60">Reporting cadence</label>
+              <label className="text-xs text-white/60">
+                Reporting cadence
+              </label>
               <select
                 value={cadence}
                 onChange={(e) =>
