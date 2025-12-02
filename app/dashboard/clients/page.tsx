@@ -219,10 +219,11 @@ export default function ClientsPage() {
 
       {/* Info strip */}
       <section className="rounded-2xl p-4 bg-black/40 border border-white/10 backdrop-blur-xl mb-4 text-xs text-white/70">
-        In the Agency plan, each client gets their own workspace, reporting
-        schedule and login. For now this is a local list so you can design your
-        client roster before wiring it to Supabase.
+            In the Agency plan, each client gets their own workspace, reporting
+            schedule, and login. Use this list to keep track of client accounts,
+            domains, and reporting cadence.
       </section>
+
 
       {/* Clients table */}
       <section className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl mb-4">
@@ -319,9 +320,10 @@ export default function ClientsPage() {
             {editingId ? "Edit client" : "New client"}
           </h2>
           <p className="text-xs text-white/60 mb-4">
-            This is a local list only for now. Later we can sync it with
-            Supabase so each client becomes their own workspace.
+            Add basic details for each client so you can organize monitoring,
+            reporting, and notes in one place.
           </p>
+
 
           <form
             onSubmit={onSave}
