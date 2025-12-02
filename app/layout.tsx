@@ -18,18 +18,40 @@ export const metadata: Metadata = {
     template: "%s | Lustmia Pro",
   },
   description:
-    "Lustmia Pro – backlink intelligence, toxicity detection, competitor analysis, and domain authority insights.",
+    "Lustmia Pro — Backlink intelligence, toxicity detection, competitor analysis, and automated SEO monitoring.",
+
+  icons: {
+    icon: "/favicon.ico", // put favicon.ico in /public
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png", // optional – if you add this in /public
+  },
+
+  openGraph: {
+    title: "Lustmia Pro",
+    description:
+      "Backlink analytics powered by AI — toxicity detection, competitor gap analysis, automated monitoring.",
+    url: "https://backlinks.lustmia.com",
+    siteName: "Lustmia Pro",
+    type: "website",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "Lustmia Pro",
+    description:
+      "AI-powered backlink insights, toxicity detection, and competitor analysis.",
+  },
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#05030b] text-white`}
       >
         {children}
       </body>
