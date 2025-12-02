@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import clsx from "clsx";
+
 import DashboardLayout from "@/components/DashboardLayout";
 import {
   ShieldAlert,
@@ -11,23 +14,138 @@ import {
   Brain,
   Info,
 } from "lucide-react";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
+
+function MetricCard({
+  icon,
+  label,
+  value,
+  helper,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number | string;
+  helper: string;
+}) {
+  return (
+    <div className="rounded-2xl p-4 bg-black/40 border border-white/10 backdrop-blur-xl">
+      <div className="flex items-center justify-between mb-2">
+        <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+          {icon}
+        </div>
+      </div>
+      <div className="text-xs text-white/60">{label}</div>
+      <div className="mt-1 text-2xl font-bold">{value}</div>
+      <div className="mt-1 text-[11px] text-white/50">{helper}</div>
+    </div>
+  );
+}
 
 export default function ToxicLinksPage() {
-  // For now these are demo numbers.
-  // Later you can hydrate from Supabase / scans.
+  // Demo metrics for now (can be wired to real data later)
   const totalBacklinks = 120;
   const toxicLinks = 9;
   const toxicPercent =
     totalBacklinks === 0 ? 0 : Math.round((toxicLinks / totalBacklinks) * 100);
-
   const highRiskDomains = 3;
-  const disavowedLinks = 0;
+
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  const [sweepsEnabled, setSweepsEnabled] = useState(false);
+  const [sweepDomain, setSweepDomain] = useState<string>("");
+
+  const [hydrated, setHydrated] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const isInternal =
+    userEmail?.toLowerCase() === "sales@lustmia.com" ||
+    userEmail?.toLowerCase() === "sales@lustmia.com.br";
+
+  useEffect(() => {
+    supabaseBrowserClient.auth
+      .getUser()
+      .then(({ data }) => {
+        if (data.user) {
+          setUserEmail(data.user.email || null);
+          setUserId(data.user.id || null);
+
+          // if no domain yet, default to email's domain
+          const email = data.user.email || "";
+          if (email.includes("@")) {
+            const domainGuess = email.split("@")[1];
+            if (domainGuess && !sweepDomain) {
+              setSweepDomain(domainGuess.toLowerCase());
+            }
+          }
+        }
+      })
+      .catch(() => {});
+
+    // Restore toggle from localStorage for UX (true source is Supabase)
+    if (typeof window !== "undefined") {
+      try {
+        const storedEnabled = window.localStorage.getItem(
+          "lustmia_toxic_sweeps_enabled",
+        );
+        if (storedEnabled === "1") setSweepsEnabled(true);
+
+        const storedDomain = window.localStorage.getItem(
+          "lustmia_toxic_sweeps_domain",
+        );
+        if (storedDomain && !sweepDomain) setSweepDomain(storedDomain);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    setHydrated(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!hydrated || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "lustmia_toxic_sweeps_enabled",
+        sweepsEnabled ? "1" : "0",
+      );
+      if (sweepDomain) {
+        window.localStorage.setItem("lustmia_toxic_sweeps_domain", sweepDomain);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [sweepsEnabled, sweepDomain, hydrated]);
+
+  async function saveSweepSettings(nextEnabled: boolean, nextDomain: string) {
+    if (!userId || !nextDomain) return;
+    try {
+      setSaving(true);
+      await fetch("/api/toxic-sweeps/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          enabled: nextEnabled,
+          domain: nextDomain.trim(),
+          cadenceDays: 30,
+        }),
+      });
+    } catch {
+      // fail silently for now
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <DashboardLayout active="toxic-links">
       {/* HEADER */}
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
+          {userEmail && (
+            <p className="text-xs text-white/50 mb-0.5">Hi {userEmail}</p>
+          )}
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
             Toxic Links
           </h1>
@@ -158,7 +276,7 @@ export default function ToxicLinksPage() {
         </div>
       </section>
 
-      {/* 2. HOW LUSTMIA FLAGS TOXICITY (AI LOGIC EXPLAINER) */}
+      {/* 2. HOW LUSTMIA FLAGS TOXICITY */}
       <section className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl mb-6">
         <div className="flex items-center gap-2 mb-3">
           <Brain className="h-4 w-4 text-fuchsia-300" />
@@ -209,7 +327,6 @@ export default function ToxicLinksPage() {
 
       {/* 3. AI EXPLANATION + ACTION PLAN */}
       <section className="grid md:grid-cols-2 gap-4 mb-6">
-        {/* AI explanation of your current risk */}
         <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center gap-2 mb-2">
             <Brain className="h-4 w-4 text-fuchsia-300" />
@@ -255,7 +372,6 @@ export default function ToxicLinksPage() {
           </p>
         </div>
 
-        {/* Concrete actions for the customer */}
         <div className="rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="h-4 w-4 text-amber-300" />
@@ -264,8 +380,8 @@ export default function ToxicLinksPage() {
 
           <ol className="list-decimal list-inside text-sm text-white/80 space-y-1 mb-3">
             <li>
-              <span className="font-semibold">Review high-risk domains</span>{" "}
-              in the Backlink Explorer and tag links you don’t recognize.
+              <span className="font-semibold">Review high-risk domains</span> in
+              the Backlink Explorer and tag links you don’t recognize.
             </li>
             <li>
               <span className="font-semibold">Try to remove links at source</span>{" "}
@@ -290,12 +406,75 @@ export default function ToxicLinksPage() {
             so your cleanup looks natural.
           </p>
 
-          <div className="mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-400/30 text-xs text-emerald-100 flex gap-2">
-            <ShieldCheck className="h-3 w-3 mt-0.5" />
-            <span>
-              Pro feature: schedule monthly “toxicity sweeps” so new spam is
-              caught early and never grows into a ranking problem.
-            </span>
+          {/* PRO FEATURE CALLOUT / TOGGLE */}
+          <div className="mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-400/30 text-xs text-emerald-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex flex-col gap-1 sm:max-w-[60%]">
+              <div className="flex items-start gap-2">
+                <ShieldCheck className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                <span>
+                  Monthly{" "}
+                  <span className="font-semibold">toxicity sweeps</span> re-scan
+                  your backlink profile on a schedule and highlight new risky
+                  links before they become a ranking problem.
+                </span>
+              </div>
+
+              {isInternal && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[11px] opacity-80">
+                    Domain to monitor:
+                  </span>
+                  <input
+                    type="text"
+                    value={sweepDomain}
+                    onChange={(e) => setSweepDomain(e.target.value)}
+                    onBlur={() =>
+                      saveSweepSettings(sweepsEnabled, sweepDomain)
+                    }
+                    placeholder="yourdomain.com"
+                    className="bg-black/40 border border-emerald-400/40 rounded-md px-2 py-1 text-[11px] text-emerald-50 outline-none focus:border-emerald-200"
+                  />
+                </div>
+              )}
+            </div>
+
+            {hydrated && (
+              <div className="flex flex-col items-end gap-1 sm:self-end">
+                {isInternal ? (
+                  <>
+                    <span className="text-[11px] opacity-80">
+                      Internal / Agency preview
+                    </span>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={async () => {
+                        const next = !sweepsEnabled;
+                        setSweepsEnabled(next);
+                        await saveSweepSettings(next, sweepDomain);
+                      }}
+                      className={clsx(
+                        "text-[11px] px-3 py-1 rounded-full border transition",
+                        sweepsEnabled
+                          ? "bg-emerald-500/20 border-emerald-300 text-emerald-50"
+                          : "bg-white/5 border-white/20 text-white/70 hover:bg-white/10",
+                      )}
+                    >
+                      {saving
+                        ? "Saving…"
+                        : sweepsEnabled
+                        ? "Sweeps ON"
+                        : "Turn sweeps on"}
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-[11px] opacity-80">
+                    Available on <span className="font-semibold">Agency</span>{" "}
+                    ($129/mo). Upgrade to enable automatic monthly checks.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -343,32 +522,5 @@ export default function ToxicLinksPage() {
         </div>
       </section>
     </DashboardLayout>
-  );
-}
-
-/* ---------- small UI component ---------- */
-
-function MetricCard({
-  icon,
-  label,
-  value,
-  helper,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number | string;
-  helper: string;
-}) {
-  return (
-    <div className="rounded-2xl p-4 bg-black/40 border border-white/10 backdrop-blur-xl">
-      <div className="flex items-center justify-between mb-2">
-        <div className="p-2 rounded-xl bg-white/5 border border-white/10">
-          {icon}
-        </div>
-      </div>
-      <div className="text-xs text-white/60">{label}</div>
-      <div className="mt-1 text-2xl font-bold">{value}</div>
-      <div className="mt-1 text-[11px] text-white/50">{helper}</div>
-    </div>
   );
 }
