@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   Link2,
   Sparkles,
@@ -89,17 +90,27 @@ export default function HomePage() {
         {/* NAVBAR */}
         <header className="flex items-center justify-between gap-4">
           {/* logo */}
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-              <Link2 className="w-5 h-5 text-fuchsia-300" />
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="flex items-center gap-2 group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden border border-white/10">
+              <Image
+                src="/lustmia-logo.svg"
+                alt="Lustmia Pro"
+                width={28}
+                height={28}
+                className="object-contain group-hover:scale-105 transition-transform"
+              />
             </div>
-            <div className="flex flex-col leading-tight">
+            <div className="flex flex-col leading-tight text-left">
               <span className="font-semibold text-lg">Lustmia</span>
               <span className="text-[11px] text-white/60">
                 Backlink Intelligence
               </span>
             </div>
-          </div>
+          </button>
 
           {/* nav links */}
           <nav className="hidden md:flex items-center gap-6 text-sm text-white/70">
@@ -191,7 +202,9 @@ export default function HomePage() {
                   disabled={status === "sending"}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold disabled:opacity-60"
                 >
-                  {status === "sending" ? "Sending magic link..." : "Start free scan"}
+                  {status === "sending"
+                    ? "Sending magic link..."
+                    : "Start free scan"}
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
