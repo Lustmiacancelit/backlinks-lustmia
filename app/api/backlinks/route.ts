@@ -10,7 +10,19 @@ export const runtime = "nodejs";
 ============================================================ */
 type Mode = "mvp" | "pro";
 
-type LinkType = "editorial" | "directory" | "social" | "other";
+type LinkType =
+  | "editorial"
+  | "directory"
+  | "social"
+  | "forum"
+  | "ugc"
+  | "sponsored"
+  | "news"
+  | "wiki"
+  | "edu"
+  | "gov"
+  | "ecommerce"
+  | "other";
 
 type LinkDetail = {
   source_page: string;
@@ -24,11 +36,23 @@ type LinkDetail = {
   link_type: LinkType;
 };
 
+type AiLinkInsight = {
+  target_url: string;
+  target_domain: string;
+  anchor_text: string | null;
+  link_type: LinkType;
+  toxicity: "low" | "medium" | "high";
+  spam_risk: number;
+  anchor_category: "branded" | "generic" | "money" | "cta" | "other";
+  note?: string;
+};
+
 type AiInsights = {
   summary: string;
-  toxicityNotes: string;
-  outreachIdeas: string;
-  competitorGaps: string;
+  toxicityNotes: string | string[];
+  outreachIdeas: string | string[];
+  competitorGaps: string | string[];
+  linkInsights: AiLinkInsight[];
 };
 
 type BacklinkResult = {
@@ -43,11 +67,8 @@ type BacklinkResult = {
   linksDetailed: LinkDetail[];
   errors: string[];
 
-  // When this scan was run (ISO string)
-  scannedAt: string;
-
   // AI
-  aiInsights?: AiInsights;
+  aiInsights?: AiInsights | null;
 };
 
 /* ============================================================
@@ -392,7 +413,7 @@ async function generateAiInsights(
             "3) 4–6 concrete outreach ideas.",
             "4) 3–6 short competitor / gap notes.",
             "",
-            "Return JSON with keys: summary, toxicityNotes, outreachIdeas, competitorGaps.",
+            "Return JSON with keys: summary, toxicityNotes, outreachIdeas, competitorGaps, linkInsights.",
             "",
             `Stats: totalBacklinks=${result.totalBacklinks}, refDomains=${result.refDomains}`,
             `Sample anchors & domains: ${JSON.stringify(anchorSamples).slice(
@@ -403,7 +424,7 @@ async function generateAiInsights(
         },
       ],
       temperature: 0.4,
-      max_tokens: 400,
+      max_tokens: 500,
       response_format: { type: "json_object" },
     };
 
@@ -431,9 +452,12 @@ async function generateAiInsights(
     const parsed = JSON.parse(raw);
     const insights: AiInsights = {
       summary: String(parsed.summary || "").trim(),
-      toxicityNotes: String(parsed.toxicityNotes || "").trim(),
-      outreachIdeas: String(parsed.outreachIdeas || "").trim(),
-      competitorGaps: String(parsed.competitorGaps || "").trim(),
+      toxicityNotes: parsed.toxicityNotes ?? "",
+      outreachIdeas: parsed.outreachIdeas ?? "",
+      competitorGaps: parsed.competitorGaps ?? "",
+      linkInsights: Array.isArray(parsed.linkInsights)
+        ? parsed.linkInsights
+        : [],
     };
 
     return insights;
@@ -477,8 +501,6 @@ export async function POST(req: NextRequest) {
       outboundDetails.map((l) => l.target_domain).filter(Boolean)
     );
 
-    const scannedAt = new Date().toISOString();
-
     const baseResult: BacklinkResult = {
       target,
       totalBacklinks: uniqueOutbound.length,
@@ -489,8 +511,6 @@ export async function POST(req: NextRequest) {
       uniqueOutbound: uniqueOutbound.length,
       linksDetailed: outboundDetails.slice(0, 200),
       errors,
-
-      scannedAt,
     };
 
     // Generate AI insights (non-blocking failure)
@@ -505,6 +525,7 @@ export async function POST(req: NextRequest) {
       const supabase = getSupabaseAdmin();
       const domain = getDomain(target);
 
+      // 1) store scan summary
       const { data: scanRow, error: scanErr } = await supabase
         .from("backlinks_scans")
         .insert({
@@ -516,14 +537,17 @@ export async function POST(req: NextRequest) {
           ref_domains: finalResult.refDomains,
           sample: finalResult.sample,
         })
-        .select("id")
+        .select("id, created_at")
         .single();
 
       if (scanErr) throw scanErr;
 
-      const scanId = (scanRow as any)?.id;
+      const scanId = (scanRow as any)?.id as string | undefined;
+      const scanCreatedAt =
+        (scanRow as any)?.created_at ?? new Date().toISOString();
 
       if (scanId && outboundDetails.length) {
+        // 2) detailed links for this scan
         const payload = outboundDetails.map((l) => ({
           scan_id: scanId,
           user_id: userId,
@@ -539,9 +563,39 @@ export async function POST(req: NextRequest) {
         }));
 
         await supabase.from("backlinks_scan_links").insert(payload);
+
+        // 3) NEW: upsert into GLOBAL BACKLINK INDEX
+        //    This lets you aggregate links across all scans (Diib-style).
+        const nowIso = scanCreatedAt || new Date().toISOString();
+
+        const indexPayload = outboundDetails
+          .map((l) => {
+            const linkingDomain = getDomain(l.source_page);
+            if (!linkingDomain) return null;
+            return {
+              target_domain: l.target_domain, // site being linked TO
+              linking_domain: linkingDomain, // site/page that links OUT
+              linking_url: l.source_page,
+              last_seen_at: nowIso,
+            };
+          })
+          .filter(Boolean) as {
+          target_domain: string;
+          linking_domain: string;
+          linking_url: string;
+          last_seen_at: string;
+        }[];
+
+        if (indexPayload.length) {
+          await supabase
+            .from("backlink_index_links")
+            .upsert(indexPayload, {
+              onConflict: "target_domain,linking_domain,linking_url",
+            });
+        }
       }
     } catch (dbErr) {
-      console.error("Supabase insert error:", dbErr);
+      console.error("Supabase insert / index error:", dbErr);
     }
 
     return NextResponse.json(finalResult);

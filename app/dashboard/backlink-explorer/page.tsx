@@ -10,6 +10,10 @@ import {
   ShieldAlert,
   Activity,
   Filter,
+  Globe,
+  CalendarClock,
+  ArrowUpRight,
+  RefreshCw,
 } from "lucide-react";
 
 /* ---------- types must match /api/backlinks ---------- */
@@ -54,6 +58,41 @@ type BacklinkResult = {
 
 type Mode = "mvp" | "pro";
 
+/* ---------- global index types (must match /api/backlink-index) ---------- */
+
+type IndexDomainRow = {
+  linking_domain: string;
+  links_count: number;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+};
+
+type IndexLinkRow = {
+  target_domain: string;
+  linking_domain: string;
+  linking_url: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  total_scans_seen: number;
+};
+
+type IndexTotals = {
+  totalLinks: number;
+  refDomains: number;
+  oldest: string | null;
+  newest: string | null;
+};
+
+type IndexResponse = {
+  ok: boolean;
+  targetDomain: string;
+  totals: IndexTotals;
+  byDomain: IndexDomainRow[];
+  latestLinks: IndexLinkRow[];
+};
+
+/* ---------- helpers ---------- */
+
 function getOrCreateUserId() {
   if (typeof window === "undefined") return "anon";
   const key = "lustmia_proscan_userid";
@@ -65,6 +104,33 @@ function getOrCreateUserId() {
   return id;
 }
 
+function formatDate(d: string | null | undefined) {
+  if (!d) return "—";
+  try {
+    return new Date(d).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  } catch {
+    return d;
+  }
+}
+
+function formatAge(d: string | null | undefined) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  const now = new Date();
+  const diff = now.getTime() - dt.getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months === 1) return "1 month ago";
+  return `${months} months ago`;
+}
+
 export default function BacklinkExplorerPage() {
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<Mode>("pro"); // default deeper crawl
@@ -74,9 +140,39 @@ export default function BacklinkExplorerPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Global index state
+  const [indexData, setIndexData] = useState<IndexResponse | null>(null);
+  const [indexLoading, setIndexLoading] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
+
   useEffect(() => {
     setUserId(getOrCreateUserId());
   }, []);
+
+  async function loadGlobalIndex(domain: string) {
+    const trimmed = domain.trim();
+    if (!trimmed) return;
+
+    setIndexLoading(true);
+    setIndexError(null);
+
+    try {
+      const params = new URLSearchParams({ d: trimmed });
+      const res = await fetch(`/api/backlink-index?${params.toString()}`);
+      const json = await res.json();
+
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || "Failed to load backlink index.");
+      }
+
+      setIndexData(json as IndexResponse);
+    } catch (e: any) {
+      setIndexError(e?.message || "Failed to load backlink index.");
+      setIndexData(null);
+    } finally {
+      setIndexLoading(false);
+    }
+  }
 
   async function runScan(e: React.FormEvent) {
     e.preventDefault();
@@ -109,7 +205,15 @@ export default function BacklinkExplorerPage() {
         throw new Error(data?.error || "Scan failed.");
       }
 
-      setResult(data as BacklinkResult);
+      const typed = data as BacklinkResult;
+      setResult(typed);
+
+      // Kick off global index load based on the target domain
+      const domain = safeHost(typed.target)?.replace(/^www\./, "");
+      if (domain) {
+        // fire-and-forget; we don't await so UI stays snappy
+        loadGlobalIndex(domain);
+      }
     } catch (err: any) {
       setError(err?.message || "Scan failed.");
     } finally {
@@ -187,6 +291,10 @@ export default function BacklinkExplorerPage() {
     return typeLabelMap[best] || "Mixed";
   }
 
+  const totals = indexData?.totals;
+  const indexByDomain = indexData?.byDomain ?? [];
+  const indexLatest = indexData?.latestLinks ?? [];
+
   return (
     <DashboardLayout active="backlink-explorer">
       {/* Header */}
@@ -196,8 +304,8 @@ export default function BacklinkExplorerPage() {
             Backlink Explorer
           </h1>
           <p className="text-white/60 text-sm">
-            Inspect individual backlinks, anchors, and link attributes from a
-            single crawl.
+            Inspect individual backlinks from a single crawl, plus your always-on
+            global backlink index built from all scans.
           </p>
         </div>
       </header>
@@ -239,10 +347,7 @@ export default function BacklinkExplorerPage() {
             </div>
           </div>
 
-          <form
-            onSubmit={runScan}
-            className="flex flex-col md:flex-row gap-2"
-          >
+          <form onSubmit={runScan} className="flex flex-col md:flex-row gap-2">
             <input
               type="url"
               required
@@ -275,7 +380,7 @@ export default function BacklinkExplorerPage() {
                 icon={<Link2 className="h-4 w-4 text-pink-300" />}
               />
               <StatPill
-                label="Referring domains"
+                label="Referring domains (this crawl)"
                 value={result.refDomains}
                 icon={<Activity className="h-4 w-4 text-indigo-300" />}
               />
@@ -303,17 +408,19 @@ export default function BacklinkExplorerPage() {
             <li>• Crawls your site from the URL you enter.</li>
             <li>• Finds outbound links, anchor text, and rel attributes.</li>
             <li>• Groups links by referring domain so you can spot patterns.</li>
-            <li>• Use Pro mode for a deeper crawl and better coverage.</li>
+            <li>• Global index aggregates all scans over time.</li>
           </ul>
         </div>
       </section>
 
-      {/* Domain-level summary */}
+      {/* Domain-level summary (single crawl) */}
       <section className="mb-6 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
         <div className="flex items-center justify-between mb-3">
-          <div className="font-semibold">Referring domains (grouped)</div>
+          <div className="font-semibold">
+            Referring domains from this crawl
+          </div>
           <div className="text-xs text-white/60">
-            Top domains where your links live.
+            Top domains where your links were found in the last scan.
           </div>
         </div>
 
@@ -347,11 +454,8 @@ export default function BacklinkExplorerPage() {
 
               {!result && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="py-8 text-center text-white/50"
-                  >
-                    Run a scan to see referring domains.
+                  <td colSpan={7} className="py-8 text-center text-white/50">
+                    Run a scan to see referring domains for this crawl.
                   </td>
                 </tr>
               )}
@@ -360,7 +464,206 @@ export default function BacklinkExplorerPage() {
         </div>
       </section>
 
-      {/* Raw links table */}
+      {/* Global Backlink Index (all scans) */}
+      <section className="mb-6 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="font-semibold flex items-center gap-2">
+              <Globe className="h-4 w-4 text-pink-400" />
+              Global Backlink Index (all scans)
+            </div>
+            <div className="text-xs text-white/60 mt-1">
+              Aggregated backlinks we&apos;ve seen for this domain across all
+              scans.
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-1 text-xs text-white/60">
+            {indexData?.targetDomain && (
+              <div>
+                Domain:{" "}
+                <span className="text-white">
+                  {indexData.targetDomain}
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const d =
+                  indexData?.targetDomain ||
+                  (result ? safeHost(result.target)?.replace(/^www\./, "") : "");
+                if (d) loadGlobalIndex(d);
+              }}
+              disabled={indexLoading}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-60"
+            >
+              <RefreshCw
+                className={clsx(
+                  "h-3 w-3",
+                  indexLoading && "animate-spin"
+                )}
+              />
+              Refresh index
+            </button>
+          </div>
+        </div>
+
+        {indexError && (
+          <div className="mb-3 text-sm text-red-200 bg-red-900/30 border border-red-700/40 p-3 rounded-xl">
+            {indexError}
+          </div>
+        )}
+
+        {!indexData && !indexLoading && !indexError && (
+          <div className="mb-3 text-sm text-white/60">
+            No global index data loaded yet. Run a scan first, or click{" "}
+            <span className="font-semibold">Refresh index</span> to fetch data
+            if it already exists.
+          </div>
+        )}
+
+        {indexLoading && (
+          <div className="mb-3 text-sm text-white/60 flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            Loading global index…
+          </div>
+        )}
+
+        {indexData && (
+          <>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <IndexKpi
+                icon={<Link2 className="h-5 w-5 text-pink-300" />}
+                label="Total backlinks in index"
+                value={totals?.totalLinks ?? 0}
+              />
+              <IndexKpi
+                icon={<Globe className="h-5 w-5 text-indigo-300" />}
+                label="Referring domains in index"
+                value={totals?.refDomains ?? 0}
+              />
+              <IndexKpi
+                icon={<CalendarClock className="h-5 w-5 text-cyan-300" />}
+                label="Oldest link age"
+                valueText={formatAge(totals?.oldest || null)}
+              />
+              <IndexKpi
+                icon={<CalendarClock className="h-5 w-5 text-emerald-300" />}
+                label="Most recent link"
+                valueText={formatAge(totals?.newest || null)}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              {/* Domains in index */}
+              <div className="xl:col-span-2">
+                <div className="text-xs text-white/60 mb-1">
+                  Top referring domains in your global index.
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-white/60 border-b border-white/10">
+                      <tr>
+                        <th className="text-left py-2">
+                          Referring domain
+                        </th>
+                        <th className="text-left py-2">
+                          Links in index
+                        </th>
+                        <th className="text-left py-2">First seen</th>
+                        <th className="text-left py-2">Last seen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {indexByDomain.slice(0, 50).map((row) => (
+                        <tr
+                          key={row.linking_domain}
+                          className="border-b border-white/5"
+                        >
+                          <td className="py-2 font-medium">
+                            {row.linking_domain || "Unknown"}
+                          </td>
+                          <td className="py-2">
+                            {row.links_count}
+                          </td>
+                          <td className="py-2 text-white/70">
+                            {formatDate(row.first_seen_at)}{" "}
+                            <span className="text-white/40 ml-1">
+                              ({formatAge(row.first_seen_at)})
+                            </span>
+                          </td>
+                          <td className="py-2 text-white/70">
+                            {formatDate(row.last_seen_at)}{" "}
+                            <span className="text-white/40 ml-1">
+                              ({formatAge(row.last_seen_at)})
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Latest links */}
+              <div>
+                <div className="text-xs text-white/60 mb-1">
+                  Latest backlinks detected in the index.
+                </div>
+                <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                  {indexLatest.map((link, i) => (
+                    <a
+                      key={link.linking_url + i}
+                      href={link.linking_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="text-xs font-semibold">
+                          {link.linking_domain}
+                        </div>
+                        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-200 border border-emerald-400/30">
+                          <ArrowUpRight className="h-3 w-3" />
+                          Visit
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-white/60 break-all mb-1">
+                        {link.linking_url}
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-white/50">
+                        <span>
+                          First:{" "}
+                          <span className="text-white">
+                            {formatDate(link.first_seen_at)}
+                          </span>
+                        </span>
+                        <span>
+                          Last:{" "}
+                          <span className="text-white">
+                            {formatDate(link.last_seen_at)}
+                          </span>
+                        </span>
+                      </div>
+                    </a>
+                  ))}
+
+                  {!indexLatest.length && (
+                    <div className="text-xs text-white/50">
+                      No backlinks recorded in the index yet for this
+                      domain.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* Raw links table (single crawl) */}
       <section className="mb-6 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
         <div className="flex items-center justify-between mb-3">
           <div className="font-semibold">All backlinks (raw view)</div>
@@ -399,7 +702,9 @@ export default function BacklinkExplorerPage() {
                   </td>
                   <td className="py-2 max-w-xs break-words text-white/80">
                     {link.anchor_text || (
-                      <span className="text-white/40">[no anchor]</span>
+                      <span className="text-white/40">
+                        [no anchor]
+                      </span>
                     )}
                   </td>
                   <td className="py-2 text-white/80">
@@ -423,11 +728,8 @@ export default function BacklinkExplorerPage() {
 
               {!result && (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="py-8 text-center text-white/50"
-                  >
-                    Run a scan to see raw backlinks.
+                  <td colSpan={5} className="py-8 text-center text-white/50">
+                    Run a scan to see raw backlinks for this crawl.
                   </td>
                 </tr>
               )}
@@ -473,6 +775,35 @@ function StatPill({
         <div className="text-xs text-white/60">{label}</div>
         <div className="text-base font-semibold">{value}</div>
       </div>
+    </div>
+  );
+}
+
+function IndexKpi({
+  icon,
+  label,
+  value,
+  valueText,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value?: number;
+  valueText?: string;
+}) {
+  const display =
+    typeof value === "number"
+      ? value.toLocaleString()
+      : valueText || "—";
+
+  return (
+    <div className="rounded-2xl p-4 bg-black/40 border border-white/10 backdrop-blur-xl">
+      <div className="flex items-center justify-between mb-2">
+        <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+          {icon}
+        </div>
+      </div>
+      <div className="text-xl font-bold mb-1">{display}</div>
+      <div className="text-xs text-white/60">{label}</div>
     </div>
   );
 }

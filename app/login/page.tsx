@@ -17,37 +17,48 @@ function LoginInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 🔁 If user is already logged in, skip login screen and go to dashboard (or ?next=)
+  // If user is already logged in, skip login and send to dashboard (or ?next=)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) {
         router.replace(next || "/dashboard");
       }
     });
-  }, [router, supabase, next]);
+  }, [router, next, supabase]);
 
   async function onLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-      next
-    )}`;
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: redirectTo },
-    });
-
-    setLoading(false);
-
-    if (error) {
-      setError(error.message);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError("Please enter a valid email address.");
       return;
     }
 
-    setSent(true);
+    setLoading(true);
+
+    try {
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        next
+      )}`;
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: trimmedEmail,
+        options: { emailRedirectTo: redirectTo },
+      });
+
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+      setSent(true);
+    } catch (err: any) {
+      setError(err?.message || "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
