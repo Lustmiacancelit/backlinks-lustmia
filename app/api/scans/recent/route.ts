@@ -40,9 +40,18 @@ export async function GET(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ scans: data || [] });
+
   } catch (e: any) {
+
+    // ⭐ CUSTOM ERROR MESSAGE FOR BLOCKED / PROTECTED SITES ⭐
+    const friendlyMessage =
+      "This website is protected by its hosting or DNS provider and cannot be scanned due to security restrictions.";
+
     return NextResponse.json(
-      { error: e?.message || "Failed to load scans" },
+      {
+        error: friendlyMessage,
+        technical: e?.message || "Unknown error",
+      },
       { status: 500 }
     );
   }

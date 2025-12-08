@@ -25,6 +25,31 @@ function normalizeUrl(input: string) {
   return u.toString();
 }
 
+/**
+ * Map low-level pro-scan errors into a friendly message
+ * that you can show in the UI.
+ */
+function mapProScanErrorToMessage(err: any): string {
+  const raw = String(err?.message || "").toLowerCase();
+
+  if (
+    raw.includes("403") ||
+    raw.includes("forbidden") ||
+    raw.includes("access denied") ||
+    raw.includes("blocked") ||
+    raw.includes("captcha") ||
+    raw.includes("cloudflare") ||
+    raw.includes("akamai") ||
+    raw.includes("bot detected") ||
+    raw.includes("protected") ||
+    raw.includes("not allowed")
+  ) {
+    return "This website is protected by its hosting or DNS provider and cannot be scanned due to security restrictions.";
+  }
+
+  return "The pro scan could not be completed. Please try again with a different site or try again later.";
+}
+
 async function fetchRenderedHTML(targetUrl: string) {
   const token = process.env.BROWSERLESS_TOKEN;
   if (!token) throw new Error("Missing BROWSERLESS_TOKEN");
@@ -80,7 +105,9 @@ function uniqueRefDomains(links: string[], targetHost: string) {
     try {
       const h = new URL(l).hostname.replace(/^www\./, "");
       if (h && h !== targetHost) domains.add(h);
-    } catch {}
+    } catch {
+      // ignore bad urls
+    }
   }
   return Array.from(domains);
 }
@@ -190,8 +217,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json(result);
   } catch (e: any) {
+    console.error("Pro scan failed:", e);
+
+    const friendly = mapProScanErrorToMessage(e);
+
     return NextResponse.json(
-      { error: e.message || "Pro scan failed" },
+      {
+        ok: false,
+        error: friendly, // 👈 show this to the user
+        technical: e?.message || "Pro scan failed", // 👈 keep for debugging/logs
+      },
       { status: 500 }
     );
   }

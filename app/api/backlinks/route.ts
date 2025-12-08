@@ -43,6 +43,9 @@ type BacklinkResult = {
   linksDetailed: LinkDetail[];
   errors: string[];
 
+  // When this scan was run (ISO string)
+  scannedAt: string;
+
   // AI
   aiInsights?: AiInsights;
 };
@@ -122,6 +125,33 @@ function classifyLink(targetUrl: string): LinkType {
   }
 
   return "editorial";
+}
+
+/**
+ * Map low-level scan errors into a friendly message that
+ * you show in the UI instead of just "Scan failed".
+ */
+function mapScanErrorToMessage(err: any): string {
+  const raw = String(err?.message || "").toLowerCase();
+
+  // Common cases when a site is protected by WAF / DNS / host
+  if (
+    raw.includes("403") ||
+    raw.includes("forbidden") ||
+    raw.includes("access denied") ||
+    raw.includes("blocked") ||
+    raw.includes("captcha") ||
+    raw.includes("cloudflare") ||
+    raw.includes("akamai") ||
+    raw.includes("bot detected") ||
+    raw.includes("protected") ||
+    raw.includes("not allowed")
+  ) {
+    return "This website is protected by its hosting or DNS provider and cannot be scanned due to security restrictions.";
+  }
+
+  // Fallback generic message
+  return "The scan could not be completed. Please try again with a different site or try again later.";
 }
 
 /* ============================================================
@@ -447,6 +477,8 @@ export async function POST(req: NextRequest) {
       outboundDetails.map((l) => l.target_domain).filter(Boolean)
     );
 
+    const scannedAt = new Date().toISOString();
+
     const baseResult: BacklinkResult = {
       target,
       totalBacklinks: uniqueOutbound.length,
@@ -457,6 +489,8 @@ export async function POST(req: NextRequest) {
       uniqueOutbound: uniqueOutbound.length,
       linksDetailed: outboundDetails.slice(0, 200),
       errors,
+
+      scannedAt,
     };
 
     // Generate AI insights (non-blocking failure)
@@ -512,8 +546,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(finalResult);
   } catch (e: any) {
+    console.error("Backlinks scan failed:", e);
+
+    const friendly = mapScanErrorToMessage(e);
+
     return NextResponse.json(
-      { error: e?.message || "Scan failed" },
+      {
+        ok: false,
+        error: friendly,
+        technical: e?.message || "Scan failed",
+      },
       { status: 500 }
     );
   }

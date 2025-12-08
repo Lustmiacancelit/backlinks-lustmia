@@ -10,6 +10,10 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  PieChart as RePieChart,
+  Pie,
+  Cell,
+  Legend,
 } from "recharts";
 import {
   Search,
@@ -25,9 +29,10 @@ import {
   FileDown,
   AlertTriangle,
   Target,
+  PieChart as PieChartIcon,
 } from "lucide-react";
 import clsx from "clsx";
-import { supabaseBrowserClient } from "@/lib/supabase/browser"; // Supabase
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 
 /* ---------- types from API ---------- */
 
@@ -44,6 +49,21 @@ type LinkType =
   | "gov"
   | "ecommerce"
   | "other";
+
+const LINK_TYPE_LABELS: Record<LinkType, string> = {
+  editorial: "Editorial",
+  directory: "Directory",
+  social: "Social",
+  forum: "Forum / Community",
+  ugc: "UGC",
+  sponsored: "Sponsored",
+  news: "News / Media",
+  wiki: "Wiki",
+  edu: "EDU",
+  gov: "GOV",
+  ecommerce: "E-commerce",
+  other: "Other",
+};
 
 type LinkDetail = {
   source_page: string;
@@ -70,9 +90,9 @@ type AiLinkInsight = {
 
 type AiInsights = {
   summary: string;
-  toxicityNotes: string | string[]; // can be single string or list
-  outreachIdeas: string | string[]; // defensive union
-  competitorGaps: string | string[]; // defensive union
+  toxicityNotes: string | string[];
+  outreachIdeas: string | string[];
+  competitorGaps: string | string[];
   linkInsights: AiLinkInsight[];
 };
 
@@ -153,7 +173,6 @@ function normalizeList(
   }
 
   if (typeof value === "string") {
-    // Split on newlines/bullets/dashed lists into separate items
     return value
       .split(/\r?\n|•|-|\d+\./g)
       .map((v) => v.trim())
@@ -213,7 +232,7 @@ export default function Dashboard() {
   // INTERNAL OVERRIDE: treat sales@lustmia.com as “always Pro”
   const isInternal =
     userEmail?.toLowerCase() === "sales@lustmia.com" ||
-    userEmail?.toLowerCase() === "sales@lustmia.com.br"; // add variations if you want
+    userEmail?.toLowerCase() === "sales@lustmia.com.br";
 
   const remaining = quota?.remaining ?? 0;
   const planName = quota?.plan ?? (isInternal ? "internal" : "free");
@@ -229,7 +248,7 @@ export default function Dashboard() {
       const user = data.user;
       const meta: any = user.user_metadata || {};
       const email = user.email || "";
-      setUserEmail(email || null); // store email for internal override
+      setUserEmail(email || null);
 
       const first =
         meta.first_name ||
@@ -268,7 +287,6 @@ export default function Dashboard() {
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
 
-    // INTERNAL: sales@lustmia.com bypasses quota checks completely
     if (isInternal) {
       return true;
     }
@@ -367,7 +385,7 @@ export default function Dashboard() {
     return { links, ref, toxic, growth };
   }, [result]);
 
-  // Map domain -> AI toxicity + anchor summary (Options 1 & 2)
+  // Map domain -> AI toxicity + anchor summary
   const domainAi = useMemo(() => {
     const map = new Map<
       string,
@@ -389,6 +407,28 @@ export default function Dashboard() {
     }
     return map;
   }, [result?.aiInsights]);
+
+  // Pie chart data for backlink composition
+  const linkPieData = useMemo(() => {
+    if (!result?.linksDetailed?.length) return [];
+    const counts: Partial<Record<LinkType, number>> = {};
+
+    for (const l of result.linksDetailed) {
+      counts[l.link_type] = (counts[l.link_type] || 0) + 1;
+    }
+
+    return Object.entries(counts)
+      .map(([type, value]) => ({
+        name: LINK_TYPE_LABELS[type as LinkType] || type,
+        value: value as number,
+      }))
+      .filter((d) => d.value > 0);
+  }, [result?.linksDetailed]);
+
+  const sampleLinks = useMemo(
+    () => (result?.linksDetailed ?? []).slice(0, 8),
+    [result?.linksDetailed]
+  );
 
   return (
     <DashboardLayout active="overview">
@@ -413,7 +453,6 @@ export default function Dashboard() {
           <button
             className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10"
             onClick={() => {
-              // Option 4 – quick PDF via print
               if (typeof window !== "undefined") {
                 window.print();
               }
@@ -514,28 +553,166 @@ export default function Dashboard() {
           )}
 
           {result && (
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
               <MiniStat label="Backlinks" value={kpis.links} />
               <MiniStat label="Ref. Domains" value={kpis.ref} />
               <MiniStat label="Toxic (est.)" value={kpis.toxic} />
 
-              <div className="md:col-span-3 mt-2">
+              {/* PIE CHART – backlink composition */}
+              <div className="lg:col-span-1 rounded-xl p-3 bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold">
+                    <PieChartIcon className="h-4 w-4 text-pink-300" />
+                    Backlink mix
+                  </div>
+                  <div className="text-[11px] text-white/50">
+                    by link type
+                  </div>
+                </div>
+                {linkPieData.length ? (
+                  <div className="h-44">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RePieChart>
+                        <Pie
+                          data={linkPieData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={32}
+                          outerRadius={60}
+                          paddingAngle={3}
+                        >
+                          {linkPieData.map((entry, index) => (
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={
+                                [
+                                  "#ec4899",
+                                  "#a855f7",
+                                  "#22c55e",
+                                  "#38bdf8",
+                                  "#eab308",
+                                  "#f97316",
+                                  "#f97373",
+                                ][index % 7]
+                              }
+                            />
+                          ))}
+                        </Pie>
+                        <Legend
+                          layout="vertical"
+                          align="right"
+                          verticalAlign="middle"
+                          formatter={(value) => (
+                            <span className="text-[11px] text-white/70">
+                              {value}
+                            </span>
+                          )}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#0A0B11",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 12,
+                          }}
+                        />
+                      </RePieChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-xs text-white/60">
+                    Run a scan to see the breakdown of editorial, directory,
+                    social and other links.
+                  </p>
+                )}
+              </div>
+
+              {/* SAMPLE BACKLINKS – richer cards */}
+              <div className="lg:col-span-2 mt-2">
                 <div className="text-xs text-white/60 mb-1">
-                  Sample backlinks
+                  Sample backlinks from this scan
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {result.sample.map((s, i) => (
-                    <a
-                      key={i}
-                      href={s}
-                      target="_blank"
-                      className="group text-sm bg-white/5 border border-white/10 rounded-xl p-2 break-all hover:bg-white/10"
-                    >
-                      {s}
-                      <ExternalLink className="inline ml-2 h-3 w-3 opacity-60 group-hover:opacity-100" />
-                    </a>
-                  ))}
-                </div>
+                {sampleLinks.length ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {sampleLinks.map((link, i) => {
+                      const host =
+                        link.target_domain || safeHost(link.target_url);
+                      const domainKey = host.toLowerCase();
+                      const ai = domainAi.get(domainKey);
+
+                      let qualityLabel = "Good link";
+                      let qualityClass =
+                        "bg-emerald-500/15 text-emerald-200 border-emerald-400/30";
+
+                      const spam = ai?.spam_risk ?? 0;
+                      const tox = ai?.toxicity;
+
+                      if (tox === "high" || spam >= 70) {
+                        qualityLabel = "Risky link";
+                        qualityClass =
+                          "bg-red-500/20 text-red-100 border-red-500/40";
+                      } else if (tox === "medium" || spam >= 40 || link.nofollow || link.sponsored) {
+                        qualityLabel = "Monitor";
+                        qualityClass =
+                          "bg-amber-500/15 text-amber-100 border-amber-400/30";
+                      }
+
+                      const typeLabel =
+                        LINK_TYPE_LABELS[link.link_type] || "Other";
+
+                      return (
+                        <a
+                          key={i}
+                          href={link.target_url}
+                          target="_blank"
+                          className="group text-sm bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col gap-1 hover:bg-white/10 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">
+                                {host}
+                              </div>
+                              <div className="text-[11px] text-white/60 truncate">
+                                {link.target_url}
+                              </div>
+                            </div>
+                            <ExternalLink className="h-3 w-3 flex-shrink-0 opacity-60 group-hover:opacity-100" />
+                          </div>
+
+                          {link.anchor_text && (
+                            <div className="text-[11px] text-white/70 mt-1 line-clamp-2">
+                              “{link.anchor_text}”
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between mt-2 text-[11px]">
+                            <span className="px-2 py-0.5 rounded-lg bg-white/5 border border-white/15">
+                              {typeLabel}
+                              {link.nofollow ? " · nofollow" : ""}
+                            </span>
+                            <span
+                              className={clsx(
+                                "px-2 py-0.5 rounded-lg border inline-flex items-center gap-1",
+                                qualityClass
+                              )}
+                            >
+                              <ShieldAlert className="h-3 w-3" />
+                              {qualityLabel}
+                            </span>
+                          </div>
+
+                          <div className="mt-1 text-[10px] text-white/50">
+                            Detected in this scan ·{" "}
+                            {new Date().toLocaleDateString()}
+                          </div>
+                        </a>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-white/60">
+                    No outbound backlinks detected on the crawled pages yet.
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -561,7 +738,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* AI Insights Panel (Options 1–3) */}
+      {/* AI Insights Panel */}
       {result?.aiInsights && (
         <section className="mb-6 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
@@ -822,23 +999,8 @@ export default function Dashboard() {
                       const spamRisk = ai?.spam_risk ?? 0;
                       const anchorCat = ai?.anchor_category ?? "mixed";
 
-                      const labelMap: Record<LinkType, string> = {
-                        editorial: "Editorial",
-                        directory: "Directory",
-                        social: "Social",
-                        forum: "Forum / Community",
-                        ugc: "UGC",
-                        sponsored: "Sponsored",
-                        news: "News / Media",
-                        wiki: "Wiki",
-                        edu: "EDU",
-                        gov: "GOV",
-                        ecommerce: "E-commerce",
-                        other: "Other",
-                      };
-
                       const typeLabel =
-                        labelMap[first.link_type] || "Other";
+                        LINK_TYPE_LABELS[first.link_type] || "Other";
 
                       let toxClass =
                         "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
