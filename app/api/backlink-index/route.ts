@@ -33,12 +33,12 @@ export async function GET(req: NextRequest) {
 
     if (!rawDomain) {
       return NextResponse.json(
-        { error: "Missing ?d=example.com parameter" },
+        { ok: false, error: "Missing ?d=example.com parameter" },
         { status: 400 }
       );
     }
 
-    // strip protocol / paths if user pastes full URL
+    // Normalize to bare domain
     let targetDomain = rawDomain;
     try {
       if (rawDomain.includes("/")) {
@@ -48,43 +48,13 @@ export async function GET(req: NextRequest) {
       }
       targetDomain = targetDomain.replace(/^www\./, "");
     } catch {
-      // leave as-is
+      // leave as–is if URL parsing fails
     }
 
     const supabase = getSupabaseAdmin();
 
-    // 1) Aggregate by linking_domain
-    const { data: byDomainRows, error: aggError } = await supabase
-      .from("backlink_index_links")
-      .select(
-        `
-        linking_domain,
-        count(*) as links_count,
-        min(first_seen_at) as first_seen_at,
-        max(last_seen_at) as last_seen_at
-      `
-      )
-      .eq("target_domain", targetDomain)
-      .group("linking_domain")
-      .order("links_count", { ascending: false });
-
-    if (aggError) throw aggError;
-
-    const byDomain = (byDomainRows || []).map((row: any) => ({
-      linking_domain: row.linking_domain as string,
-      links_count: Number(row.links_count || 0),
-      first_seen_at: row.first_seen_at as string | null,
-      last_seen_at: row.last_seen_at as string | null,
-    }));
-
-    const totalLinks = byDomain.reduce(
-      (sum, r) => sum + (r.links_count || 0),
-      0
-    );
-    const refDomains = byDomain.length;
-
-    // 2) Latest individual backlinks (for detail list)
-    const { data: latestLinksRows, error: latestError } = await supabase
+    // 1) Fetch all index rows for this domain
+    const { data: rows, error } = await supabase
       .from("backlink_index_links")
       .select(
         `
@@ -96,22 +66,104 @@ export async function GET(req: NextRequest) {
         total_scans_seen
       `
       )
-      .eq("target_domain", targetDomain)
-      .order("last_seen_at", { ascending: false, nullsLast: true })
-      .limit(100);
+      .eq("target_domain", targetDomain);
 
-    if (latestError) throw latestError;
+    if (error) throw error;
 
-    const latestLinks = (latestLinksRows || []).map((row: any) => ({
-      target_domain: row.target_domain as string,
-      linking_domain: row.linking_domain as string,
-      linking_url: row.linking_url as string,
-      first_seen_at: row.first_seen_at as string | null,
-      last_seen_at: row.last_seen_at as string | null,
-      total_scans_seen: Number(row.total_scans_seen || 1),
-    }));
+    if (!rows || rows.length === 0) {
+      // No data yet for this domain – return a clean empty payload
+      return NextResponse.json({
+        ok: true,
+        targetDomain,
+        totals: {
+          totalLinks: 0,
+          refDomains: 0,
+          oldest: null,
+          newest: null,
+        },
+        byDomain: [],
+        latestLinks: [],
+      });
+    }
 
-    // 3) Basic age metrics
+    // 2) Aggregate by linking_domain in memory
+    type Row = {
+      target_domain: string;
+      linking_domain: string | null;
+      linking_url: string;
+      first_seen_at: string | null;
+      last_seen_at: string | null;
+      total_scans_seen: number | null;
+    };
+
+    const byDomainMap = new Map<
+      string,
+      {
+        linking_domain: string;
+        links_count: number;
+        first_seen_at: string | null;
+        last_seen_at: string | null;
+      }
+    >();
+
+    const latestLinks = [] as {
+      target_domain: string;
+      linking_domain: string;
+      linking_url: string;
+      first_seen_at: string | null;
+      last_seen_at: string | null;
+      total_scans_seen: number;
+    }[];
+
+    for (const raw of rows as Row[]) {
+      const dom = (raw.linking_domain || "").toLowerCase().trim();
+      if (!dom) continue;
+
+      const first = raw.first_seen_at ?? raw.last_seen_at ?? null;
+      const last = raw.last_seen_at ?? raw.first_seen_at ?? null;
+
+      // aggregate per-domain
+      const existing = byDomainMap.get(dom);
+      if (!existing) {
+        byDomainMap.set(dom, {
+          linking_domain: dom,
+          links_count: 1,
+          first_seen_at: first,
+          last_seen_at: last,
+        });
+      } else {
+        existing.links_count += 1;
+
+        if (first && (!existing.first_seen_at || first < existing.first_seen_at)) {
+          existing.first_seen_at = first;
+        }
+        if (last && (!existing.last_seen_at || last > existing.last_seen_at)) {
+          existing.last_seen_at = last;
+        }
+      }
+
+      // also build latestLinks list
+      latestLinks.push({
+        target_domain: raw.target_domain,
+        linking_domain: dom,
+        linking_url: raw.linking_url,
+        first_seen_at: first,
+        last_seen_at: last,
+        total_scans_seen: Number(raw.total_scans_seen || 1),
+      });
+    }
+
+    const byDomain = Array.from(byDomainMap.values()).sort(
+      (a, b) => b.links_count - a.links_count
+    );
+
+    const totalLinks = byDomain.reduce(
+      (sum, r) => sum + (r.links_count || 0),
+      0
+    );
+    const refDomains = byDomain.length;
+
+    // 3) Age metrics (across all links)
     const allDates = latestLinks
       .map((l) => l.first_seen_at)
       .concat(latestLinks.map((l) => l.last_seen_at))
@@ -143,7 +195,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        error: e?.message || "Failed to load backlink index",
+        error:
+          e?.message ||
+          "Failed to load backlink index (internal error – see logs).",
       },
       { status: 500 }
     );
