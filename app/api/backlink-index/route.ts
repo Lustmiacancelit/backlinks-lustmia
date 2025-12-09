@@ -1,4 +1,5 @@
 // app/api/backlink-index/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -24,12 +25,39 @@ function getSupabaseAdmin() {
   });
 }
 
+type IndexRow = {
+  target_domain: string;
+  linking_domain: string | null;
+  linking_url: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  total_scans_seen: number | null;
+};
+
+type DomainBucket = {
+  linking_domain: string;
+  links_count: number;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+};
+
+type LatestLink = {
+  target_domain: string;
+  linking_domain: string;
+  linking_url: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  total_scans_seen: number;
+};
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const rawDomain = (searchParams.get("d") || searchParams.get("domain") || "")
-      .toLowerCase()
-      .trim();
+
+    const rawDomain =
+      (searchParams.get("d") || searchParams.get("domain") || "")
+        .toLowerCase()
+        .trim();
 
     if (!rawDomain) {
       return NextResponse.json(
@@ -38,7 +66,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Normalize to bare domain
+    // Normalize e.g. "https://lustmia.com/path" → "lustmia.com"
     let targetDomain = rawDomain;
     try {
       if (rawDomain.includes("/")) {
@@ -48,7 +76,7 @@ export async function GET(req: NextRequest) {
       }
       targetDomain = targetDomain.replace(/^www\./, "");
     } catch {
-      // leave as–is if URL parsing fails
+      // if URL parsing explodes, just keep whatever user passed
     }
 
     const supabase = getSupabaseAdmin();
@@ -71,7 +99,7 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
 
     if (!rows || rows.length === 0) {
-      // No data yet for this domain – return a clean empty payload
+      // No index data yet for this domain
       return NextResponse.json({
         ok: true,
         targetDomain,
@@ -86,63 +114,37 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // 2) Aggregate by linking_domain in memory
-    type Row = {
-      target_domain: string;
-      linking_domain: string | null;
-      linking_url: string;
-      first_seen_at: string | null;
-      last_seen_at: string | null;
-      total_scans_seen: number | null;
-    };
+    const domainMap = new Map<string, DomainBucket>();
+    const latestLinks: LatestLink[] = [];
 
-    const byDomainMap = new Map<
-      string,
-      {
-        linking_domain: string;
-        links_count: number;
-        first_seen_at: string | null;
-        last_seen_at: string | null;
-      }
-    >();
-
-    const latestLinks = [] as {
-      target_domain: string;
-      linking_domain: string;
-      linking_url: string;
-      first_seen_at: string | null;
-      last_seen_at: string | null;
-      total_scans_seen: number;
-    }[];
-
-    for (const raw of rows as Row[]) {
+    for (const raw of rows as IndexRow[]) {
       const dom = (raw.linking_domain || "").toLowerCase().trim();
       if (!dom) continue;
 
       const first = raw.first_seen_at ?? raw.last_seen_at ?? null;
       const last = raw.last_seen_at ?? raw.first_seen_at ?? null;
 
-      // aggregate per-domain
-      const existing = byDomainMap.get(dom);
-      if (!existing) {
-        byDomainMap.set(dom, {
+      // Aggregate counts & date ranges by domain
+      const bucket = domainMap.get(dom);
+      if (!bucket) {
+        domainMap.set(dom, {
           linking_domain: dom,
           links_count: 1,
           first_seen_at: first,
           last_seen_at: last,
         });
       } else {
-        existing.links_count += 1;
+        bucket.links_count += 1;
 
-        if (first && (!existing.first_seen_at || first < existing.first_seen_at)) {
-          existing.first_seen_at = first;
+        if (first && (!bucket.first_seen_at || first < bucket.first_seen_at)) {
+          bucket.first_seen_at = first;
         }
-        if (last && (!existing.last_seen_at || last > existing.last_seen_at)) {
-          existing.last_seen_at = last;
+        if (last && (!bucket.last_seen_at || last > bucket.last_seen_at)) {
+          bucket.last_seen_at = last;
         }
       }
 
-      // also build latestLinks list
+      // Latest links list
       latestLinks.push({
         target_domain: raw.target_domain,
         linking_domain: dom,
@@ -153,7 +155,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const byDomain = Array.from(byDomainMap.values()).sort(
+    const byDomain = Array.from(domainMap.values()).sort(
       (a, b) => b.links_count - a.links_count
     );
 
@@ -163,7 +165,7 @@ export async function GET(req: NextRequest) {
     );
     const refDomains = byDomain.length;
 
-    // 3) Age metrics (across all links)
+    // 2) Age metrics across all links
     const allDates = latestLinks
       .map((l) => l.first_seen_at)
       .concat(latestLinks.map((l) => l.last_seen_at))
@@ -173,6 +175,7 @@ export async function GET(req: NextRequest) {
       allDates.length > 0
         ? allDates.reduce((min, d) => (d < min ? d : min), allDates[0])
         : null;
+
     const newest =
       allDates.length > 0
         ? allDates.reduce((max, d) => (d > max ? d : max), allDates[0])
