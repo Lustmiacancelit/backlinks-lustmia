@@ -1,0 +1,106 @@
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index 0000000..1111111 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -95,6 +95,18 @@ type BacklinkResult = {
+   aiInsights?: AiInsights | null;
+ };
+ 
++type SiteHealthAI = {
++  authority: number;
++  velocity: number;
++  spamRisk: number;
++  summary?: string;
++};
++
+ type Mode = "mvp" | "pro";
+ 
+ type Quota = {
+@@ -165,6 +177,9 @@ export default function Dashboard() {
+   const [recentScans, setRecentScans] = useState<any[]>([]);
+ 
+   const [displayName, setDisplayName] = useState<string | null>(null);
++  const [siteHealth, setSiteHealth] = useState<SiteHealthAI | null>(null);
++  const [healthLoading, setHealthLoading] = useState(false);
++  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+ 
+   const [userEmail, setUserEmail] = useState<string | null>(null);
+ 
+@@ -310,6 +325,33 @@ export default function Dashboard() {
+     await quickScan(undefined, scanMode);
+   }
+ 
++  async function loadSiteHealth(domain: string) {
++    if (!domain) return;
++    setHealthLoading(true);
++    try {
++      const res = await fetch(
++        `/api/site-health?domain=${encodeURIComponent(domain)}`
++      );
++      const data = await res.json();
++      if (res.ok) {
++        setSiteHealth(data);
++      }
++    } catch {
++      // silent fail
++    } finally {
++      setHealthLoading(false);
++    }
++  }
++
+   const kpis = useMemo(() => {
+     const links = result?.totalBacklinks ?? 0;
+@@ -523,6 +565,9 @@ export default function Dashboard() {
+               <MiniStat label="Backlinks" value={kpis.links} />
+               <MiniStat label="Ref. Domains" value={kpis.ref} />
+               <MiniStat label="Toxic (est.)" value={kpis.toxic} />
++
++              {/* clicking a scan updates site health */}
++              {result?.target && loadSiteHealth(result.target)}
+ 
+               {/* PIE CHART – backlink composition */}
+               <div className="lg:col-span-1 rounded-xl p-3 bg-white/5 border border-white/10">
+@@ -706,6 +751,38 @@ export default function Dashboard() {
+           <div className="font-semibold flex items-center gap-2 mb-3">
+             <Activity className="h-4 w-4 text-cyan-300" />
+             Site Health (AI)
+           </div>
+ 
+-          <div className="space-y-3">
+-            <HealthRow label="Authority Trend" score={76} color="pink" />
+-            <HealthRow label="Backlink Velocity" score={68} color="cyan" />
+-            <HealthRow label="Spam Risk" score={14} color="red" invert />
+-          </div>
++          {healthLoading && (
++            <div className="text-xs text-white/60">Analyzing site health…</div>
++          )}
++
++          {!healthLoading && siteHealth && (
++            <div className="space-y-3">
++              <HealthRow
++                label="Authority Trend"
++                score={siteHealth.authority}
++                color="pink"
++              />
++              <HealthRow
++                label="Backlink Velocity"
++                score={siteHealth.velocity}
++                color="cyan"
++              />
++              <HealthRow
++                label="Spam Risk"
++                score={siteHealth.spamRisk}
++                color="red"
++                invert
++              />
++            </div>
++          )}
++
++          {!healthLoading && !siteHealth && (
++            <div className="text-xs text-white/60">
++              Run a scan to generate AI health insights.
++            </div>
++          )}
+ 
+           <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70">
+             AI tips unlocked in Pro: toxic detection, outreach suggestions,

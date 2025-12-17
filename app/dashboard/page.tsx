@@ -110,6 +110,50 @@ type BacklinkResult = {
   aiInsights?: AiInsights | null;
 };
 
+/** NEW: Site Health AI payload (from /api/site-health) */
+type SiteHealthAI = {
+  authority: number; // 0-100
+  velocity: number; // 0-100
+  spamRisk: number; // 0-100
+  summary?: string;
+};
+
+/** NEW: Dashboard summary payload (decision-first KPIs) */
+type DashboardSummary = {
+  target: string;
+  kpis: {
+    total_backlinks: number;
+    ref_domains: number;
+    negative_impact_links: number;
+    growth_score: number;
+    net_impact_change_7d?: number;
+  };
+};
+
+/** NEW: Trend payload (impact-weighted series) */
+type ImpactTrend = {
+  target: string;
+  series: { date: string; net_impact: number }[];
+};
+
+/** NEW: Next Actions payload (“What Matters Right Now”) */
+type NextActionsResponse = {
+  target: string;
+  items: Array<{
+    type:
+      | "RESTORE_PAGE"
+      | "FIX_REDIRECT"
+      | "CONSOLIDATE_DUPLICATES"
+      | "REMOVE_BLOCKER"
+      | "IGNORE";
+    priority: number;
+    summary: string;
+    estimated_impact: "HIGH" | "MEDIUM" | "LOW";
+    confidence: number; // 0..1
+    affected_urls?: string[];
+  }>;
+};
+
 type Mode = "mvp" | "pro";
 
 type Quota = {
@@ -165,9 +209,7 @@ function normalizeQuota(d: any): Quota | null {
  * Safely normalize any AI field (string | string[] | undefined) into string[]
  * so we can always `.map` without crashing.
  */
-function normalizeList(
-  value: string | string[] | null | undefined
-): string[] {
+function normalizeList(value: string | string[] | null | undefined): string[] {
   if (Array.isArray(value)) {
     return value.filter((v) => typeof v === "string" && v.trim().length > 0);
   }
@@ -215,6 +257,16 @@ function getOrCreateUserId() {
   return id;
 }
 
+function toDomainOrUrl(input: string) {
+  const v = (input || "").trim();
+  if (!v) return "";
+  try {
+    return new URL(v).hostname;
+  } catch {
+    return v.replace(/^https?:\/\//, "").split("/")[0];
+  }
+}
+
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -228,6 +280,17 @@ export default function Dashboard() {
 
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  /** NEW: Site Health AI state */
+  const [siteHealth, setSiteHealth] = useState<SiteHealthAI | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+
+  /** NEW: decision-first dashboard data */
+  const [dashSummary, setDashSummary] = useState<DashboardSummary | null>(null);
+  const [impactTrend, setImpactTrend] = useState<ImpactTrend | null>(null);
+  const [nextActions, setNextActions] = useState<NextActionsResponse | null>(
+    null
+  );
 
   // INTERNAL OVERRIDE: treat sales@lustmia.com as “always Pro”
   const isInternal =
@@ -284,6 +347,97 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
+  /** NEW: load decision-first endpoints for the dashboard */
+  async function loadDecisionDashboard(targetDomainOrUrl: string) {
+    const target = toDomainOrUrl(targetDomainOrUrl);
+    if (!target) return;
+
+    try {
+      fetch(`/api/v1/dashboard/summary?target=${encodeURIComponent(target)}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.kpis) setDashSummary(d);
+        })
+        .catch(() => {});
+
+      fetch(
+        `/api/v1/dashboard/impact-trend?target=${encodeURIComponent(
+          target
+        )}&days=7`
+      )
+        .then((r) => r.json())
+        .then((d) => {
+          if (Array.isArray(d?.series)) setImpactTrend(d);
+        })
+        .catch(() => {});
+
+      fetch(`/api/v1/actions/next?target=${encodeURIComponent(target)}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (Array.isArray(d?.items)) setNextActions(d);
+        })
+        .catch(() => {});
+    } catch {
+      // silent fail; UI falls back to existing behavior
+    }
+  }
+
+  /** NEW: Load Site Health AI after scan (server computes metrics) */
+  async function loadSiteHealth(domainOrUrl: string) {
+    if (!domainOrUrl) return;
+    setHealthLoading(true);
+    try {
+      // NEW: prefer decision-first health AI summary if available
+      try {
+        const target = toDomainOrUrl(domainOrUrl);
+        const r2 = await fetch(
+          `/api/v1/health/ai-summary?target=${encodeURIComponent(target)}`
+        );
+        const d2 = await r2.json().catch(() => null);
+        if (r2.ok && d2?.bars) {
+          setSiteHealth({
+            authority: Number(d2?.bars?.authority_trend?.value ?? 0),
+            velocity: Number(d2?.bars?.backlink_velocity?.value ?? 0),
+            spamRisk: Number(d2?.bars?.spam_risk?.value ?? 0),
+            summary: typeof d2?.tip === "string" ? d2.tip : undefined,
+          });
+          setHealthLoading(false);
+          return;
+        }
+      } catch {
+        // fall back to /api/site-health below
+      }
+
+      const res = await fetch(
+        `/api/site-health?domain=${encodeURIComponent(domainOrUrl)}`
+      );
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data) {
+        setSiteHealth({
+          authority: Number(data.authority ?? 0),
+          velocity: Number(data.velocity ?? 0),
+          spamRisk: Number(data.spamRisk ?? 0),
+          summary: typeof data.summary === "string" ? data.summary : undefined,
+        });
+      } else {
+        setSiteHealth(null);
+      }
+    } catch {
+      setSiteHealth(null);
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  /** NEW: trigger Site Health once a scan result exists */
+  useEffect(() => {
+    if (!result?.target) return;
+    loadSiteHealth(result.target);
+    loadDecisionDashboard(result.target); // NEW
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result?.target]);
+
   async function consumeProScanIfNeeded(scanMode: Mode) {
     if (scanMode !== "pro") return true;
 
@@ -324,6 +478,14 @@ export default function Dashboard() {
     setError(null);
     setResult(null);
 
+    // reset Site Health each scan (prevents stale health display)
+    setSiteHealth(null);
+
+    // reset decision-first states each scan (prevents stale display)
+    setDashSummary(null);
+    setImpactTrend(null);
+    setNextActions(null);
+
     const cleanedUrl = url.trim();
 
     try {
@@ -340,9 +502,7 @@ export default function Dashboard() {
 
       if (!res.ok) {
         if (res.status === 403 || String(data?.error || "").includes("403")) {
-          setError(
-            "Protected site detected. Try Pro Scan or a different site."
-          );
+          setError("Protected site detected. Try Pro Scan or a different site.");
           return;
         }
         throw new Error(data?.error || "Scan failed.");
@@ -378,18 +538,32 @@ export default function Dashboard() {
   }
 
   const kpis = useMemo(() => {
+    // Prefer decision-first KPIs when available
+    if (dashSummary?.kpis) {
+      const links = Number(dashSummary.kpis.total_backlinks ?? 0);
+      const ref = Number(dashSummary.kpis.ref_domains ?? 0);
+      const toxic = Number(dashSummary.kpis.negative_impact_links ?? 0); // NEW meaning
+      const growth = Number(dashSummary.kpis.growth_score ?? 0);
+      return { links, ref, toxic, growth };
+    }
+
+    // Fallback to old estimation
     const links = result?.totalBacklinks ?? 0;
     const ref = result?.refDomains ?? 0;
     const toxic = Math.max(0, Math.round(links * 0.06));
     const growth = links === 0 ? 0 : Math.round((links / Math.max(1, ref)) * 8);
     return { links, ref, toxic, growth };
-  }, [result]);
+  }, [result, dashSummary]);
 
   // Map domain -> AI toxicity + anchor summary
   const domainAi = useMemo(() => {
     const map = new Map<
       string,
-      { toxicity: AiLinkInsight["toxicity"]; spam_risk: number; anchor_category: string }
+      {
+        toxicity: AiLinkInsight["toxicity"];
+        spam_risk: number;
+        anchor_category: string;
+      }
     >();
     if (!result?.aiInsights?.linkInsights) return map;
 
@@ -430,15 +604,23 @@ export default function Dashboard() {
     [result?.linksDetailed]
   );
 
+  const trendData = useMemo(() => {
+    if (impactTrend?.series?.length) {
+      return impactTrend.series.map((p) => ({
+        day: new Date(p.date).toLocaleDateString(undefined, { weekday: "short" }),
+        links: p.net_impact,
+      }));
+    }
+    return mockTrend;
+  }, [impactTrend]);
+
   return (
     <DashboardLayout active="overview">
       {/* TOPBAR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           {displayName && (
-            <p className="text-sm text-white/70 mb-0.5">
-              Hi {displayName} 👋
-            </p>
+            <p className="text-sm text-white/70 mb-0.5">Hi {displayName} 👋</p>
           )}
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
             Backlinks Dashboard
@@ -552,6 +734,57 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* NEW: What Matters Right Now (decision-first) */}
+          {nextActions?.items?.length ? (
+            <div className="mt-4 rounded-2xl p-4 bg-white/5 border border-white/10">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold flex items-center gap-2">
+                  <Target className="h-4 w-4 text-emerald-300" />
+                  What matters right now
+                </div>
+                <div className="text-[11px] text-white/60">
+                  confidence{" "}
+                  {Math.round((nextActions.items[0]?.confidence ?? 0) * 100)}%
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {nextActions.items.slice(0, 3).map((a, idx) => (
+                  <div
+                    key={`${a.type}-${idx}`}
+                    className="p-3 rounded-xl bg-black/30 border border-white/10"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold">
+                        #{a.priority} · {a.type.replaceAll("_", " ")}
+                      </div>
+                      <span
+                        className={clsx(
+                          "text-[11px] px-2 py-1 rounded-lg border",
+                          a.estimated_impact === "HIGH"
+                            ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/20"
+                            : a.estimated_impact === "MEDIUM"
+                            ? "bg-amber-500/15 text-amber-200 border-amber-400/20"
+                            : "bg-white/5 text-white/70 border-white/10"
+                        )}
+                      >
+                        {a.estimated_impact}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/70 mt-1">{a.summary}</div>
+
+                    {a.affected_urls?.length ? (
+                      <div className="mt-2 text-[11px] text-white/60">
+                        Affected: {a.affected_urls.slice(0, 3).join(", ")}
+                        {a.affected_urls.length > 3 ? "…" : ""}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {result && (
             <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
               <MiniStat label="Backlinks" value={kpis.links} />
@@ -565,9 +798,7 @@ export default function Dashboard() {
                     <PieChartIcon className="h-4 w-4 text-pink-300" />
                     Backlink mix
                   </div>
-                  <div className="text-[11px] text-white/50">
-                    by link type
-                  </div>
+                  <div className="text-[11px] text-white/50">by link type</div>
                 </div>
                 {linkPieData.length ? (
                   <div className="h-44">
@@ -634,8 +865,7 @@ export default function Dashboard() {
                 {sampleLinks.length ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {sampleLinks.map((link, i) => {
-                      const host =
-                        link.target_domain || safeHost(link.target_url);
+                      const host = link.target_domain || safeHost(link.target_url);
                       const domainKey = host.toLowerCase();
                       const ai = domainAi.get(domainKey);
 
@@ -650,14 +880,18 @@ export default function Dashboard() {
                         qualityLabel = "Risky link";
                         qualityClass =
                           "bg-red-500/20 text-red-100 border-red-500/40";
-                      } else if (tox === "medium" || spam >= 40 || link.nofollow || link.sponsored) {
+                      } else if (
+                        tox === "medium" ||
+                        spam >= 40 ||
+                        link.nofollow ||
+                        link.sponsored
+                      ) {
                         qualityLabel = "Monitor";
                         qualityClass =
                           "bg-amber-500/15 text-amber-100 border-amber-400/30";
                       }
 
-                      const typeLabel =
-                        LINK_TYPE_LABELS[link.link_type] || "Other";
+                      const typeLabel = LINK_TYPE_LABELS[link.link_type] || "Other";
 
                       return (
                         <a
@@ -668,9 +902,7 @@ export default function Dashboard() {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="font-medium truncate">
-                                {host}
-                              </div>
+                              <div className="font-medium truncate">{host}</div>
                               <div className="text-[11px] text-white/60 truncate">
                                 {link.target_url}
                               </div>
@@ -701,8 +933,7 @@ export default function Dashboard() {
                           </div>
 
                           <div className="mt-1 text-[10px] text-white/50">
-                            Detected in this scan ·{" "}
-                            {new Date().toLocaleDateString()}
+                            Detected in this scan · {new Date().toLocaleDateString()}
                           </div>
                         </a>
                       );
@@ -725,15 +956,35 @@ export default function Dashboard() {
             Site Health (AI)
           </div>
 
-          <div className="space-y-3">
-            <HealthRow label="Authority Trend" score={76} color="pink" />
-            <HealthRow label="Backlink Velocity" score={68} color="cyan" />
-            <HealthRow label="Spam Risk" score={14} color="red" invert />
-          </div>
+          {/* NEW: Dynamic site health instead of hardcoded */}
+          {healthLoading && (
+            <div className="text-xs text-white/60">Analyzing site health…</div>
+          )}
+
+          {!healthLoading && siteHealth && (
+            <div className="space-y-3">
+              <HealthRow label="Authority Trend" score={siteHealth.authority} color="pink" />
+              <HealthRow label="Backlink Velocity" score={siteHealth.velocity} color="cyan" />
+              <HealthRow label="Spam Risk" score={siteHealth.spamRisk} color="red" invert />
+            </div>
+          )}
+
+          {!healthLoading && !siteHealth && (
+            <div className="space-y-3">
+              <HealthRow label="Authority Trend" score={76} color="pink" />
+              <HealthRow label="Backlink Velocity" score={68} color="cyan" />
+              <HealthRow label="Spam Risk" score={14} color="red" invert />
+            </div>
+          )}
 
           <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white/70">
             AI tips unlocked in Pro: toxic detection, outreach suggestions,
             competitor gaps.
+            {siteHealth?.summary ? (
+              <div className="mt-2 text-white/60 whitespace-pre-line">
+                {siteHealth.summary}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
@@ -788,22 +1039,18 @@ export default function Dashboard() {
                 Outreach Ideas
               </h3>
               <ul className="list-disc list-inside space-y-0.5 text-white/70">
-                {normalizeList(result.aiInsights.outreachIdeas).map(
-                  (idea, i) => (
-                    <li key={i}>{idea}</li>
-                  )
-                )}
+                {normalizeList(result.aiInsights.outreachIdeas).map((idea, i) => (
+                  <li key={i}>{idea}</li>
+                ))}
               </ul>
             </div>
 
             <div>
               <h3 className="font-semibold mb-1">Competitor Gaps</h3>
               <ul className="list-disc list-inside space-y-0.5 text-white/70">
-                {normalizeList(result.aiInsights.competitorGaps).map(
-                  (gap, i) => (
-                    <li key={i}>{gap}</li>
-                  )
-                )}
+                {normalizeList(result.aiInsights.competitorGaps).map((gap, i) => (
+                  <li key={i}>{gap}</li>
+                ))}
               </ul>
             </div>
           </div>
@@ -850,32 +1097,15 @@ export default function Dashboard() {
 
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={mockTrend}>
+              <AreaChart data={trendData}>
                 <defs>
-                  <linearGradient
-                    id="linksGradient"
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <stop
-                      offset="0%"
-                      stopColor="rgb(236,72,153)"
-                      stopOpacity={0.8}
-                    />
-                    <stop
-                      offset="100%"
-                      stopColor="rgb(99,102,241)"
-                      stopOpacity={0.05}
-                    />
+                  <linearGradient id="linksGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgb(236,72,153)" stopOpacity={0.8} />
+                    <stop offset="100%" stopColor="rgb(99,102,241)" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeOpacity={0.1} vertical={false} />
-                <XAxis
-                  dataKey="day"
-                  tick={{ fill: "rgba(255,255,255,0.6)" }}
-                />
+                <XAxis dataKey="day" tick={{ fill: "rgba(255,255,255,0.6)" }} />
                 <YAxis tick={{ fill: "rgba(255,255,255,0.6)" }} />
                 <Tooltip
                   contentStyle={{
@@ -925,9 +1155,7 @@ export default function Dashboard() {
                       <div
                         className={clsx(
                           "text-sm font-semibold flex items-center gap-1 justify-end",
-                          s.change >= 0
-                            ? "text-emerald-300"
-                            : "text-red-300"
+                          s.change >= 0 ? "text-emerald-300" : "text-red-300"
                         )}
                       >
                         {s.change >= 0 ? (
@@ -955,9 +1183,7 @@ export default function Dashboard() {
         <div className="xl:col-span-3 rounded-2xl p-5 bg-black/40 border border-white/10 backdrop-blur-xl">
           <div className="flex items-center justify-between mb-3">
             <div className="font-semibold">Backlink Explorer (Top Domains)</div>
-            <div className="text-xs text-white/60">
-              Deep crawl + AI toxicity in Pro
-            </div>
+            <div className="text-xs text-white/60">Deep crawl + AI toxicity in Pro</div>
           </div>
 
           <div className="overflow-x-auto">
@@ -977,8 +1203,7 @@ export default function Dashboard() {
                   Object.values(
                     result.linksDetailed.reduce<Record<string, LinkDetail[]>>(
                       (acc, link) => {
-                        const dom =
-                          link.target_domain || safeHost(link.target_url);
+                        const dom = link.target_domain || safeHost(link.target_url);
                         if (!dom) return acc;
                         if (!acc[dom]) acc[dom] = [];
                         acc[dom].push(link);
@@ -990,8 +1215,7 @@ export default function Dashboard() {
                     .slice(0, 12)
                     .map((group, i) => {
                       const first = group[0];
-                      const host =
-                        first.target_domain || safeHost(first.target_url);
+                      const host = first.target_domain || safeHost(first.target_url);
                       const linkCount = group.length;
 
                       const ai = domainAi.get(host.toLowerCase());
@@ -999,8 +1223,7 @@ export default function Dashboard() {
                       const spamRisk = ai?.spam_risk ?? 0;
                       const anchorCat = ai?.anchor_category ?? "mixed";
 
-                      const typeLabel =
-                        LINK_TYPE_LABELS[first.link_type] || "Other";
+                      const typeLabel = LINK_TYPE_LABELS[first.link_type] || "Other";
 
                       let toxClass =
                         "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
@@ -1012,8 +1235,7 @@ export default function Dashboard() {
                         toxLabel = "Medium";
                       }
                       if (toxicity === "high" || spamRisk >= 70) {
-                        toxClass =
-                          "bg-red-500/20 text-red-100 border-red-500/40";
+                        toxClass = "bg-red-500/20 text-red-100 border-red-500/40";
                         toxLabel = "High";
                       }
 
@@ -1055,10 +1277,7 @@ export default function Dashboard() {
 
                 {!result && (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="py-8 text-center text-white/50"
-                    >
+                    <td colSpan={6} className="py-8 text-center text-white/50">
                       Run a Quick Scan to populate results.
                     </td>
                   </tr>
@@ -1143,9 +1362,7 @@ function HealthRow({
     <div>
       <div className="flex justify-between text-xs text-white/70 mb-1">
         <span>{label}</span>
-        <span className={invert ? "text-red-200" : "text-white"}>
-          {score}%
-        </span>
+        <span className={invert ? "text-red-200" : "text-white"}>{score}%</span>
       </div>
       <div className="h-2 rounded-full bg-white/10 overflow-hidden">
         <div
