@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type Strategy = "desktop" | "mobile";
@@ -62,7 +62,13 @@ function ScorePie({ value }: { value: number | null }) {
   );
 }
 
-function MetricCard({ title, children }: { title: string; children: ReactNode }) {
+function MetricCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div
       style={{
@@ -127,20 +133,9 @@ function extractPsiLists(psi: any) {
       };
     })
     .sort(
-      (a, b) =>
-        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
+      (a, b) => (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
     )
     .slice(0, 10);
-
-  const diagnostics = all
-    .filter(
-      (a) =>
-        a.scoreDisplayMode === "informative" ||
-        a.scoreDisplayMode === "manual" ||
-        a.scoreDisplayMode === "notApplicable"
-    )
-    .filter((a) => !!a.title)
-    .slice(0, 12);
 
   const failed = all
     .filter(
@@ -149,7 +144,66 @@ function extractPsiLists(psi: any) {
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1))
     .slice(0, 12);
 
-  return { opportunities, diagnostics, failed };
+  return { opportunities, failed };
+}
+
+function Spinner({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.55)",
+        backdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        style={{
+          width: "min(520px, calc(100% - 32px))",
+          borderRadius: 18,
+          border: "1px solid rgba(255,255,255,0.14)",
+          background: "rgba(10,10,14,0.9)",
+          padding: 18,
+          boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div
+            aria-hidden
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: "999px",
+              border: "3px solid rgba(255,255,255,0.15)",
+              borderTopColor: "rgba(255,255,255,0.9)",
+              animation: "spin 0.9s linear infinite",
+            }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>{label}</div>
+            <div style={{ opacity: 0.75, fontSize: 13, marginTop: 2 }}>
+              This can take a few seconds. Please keep this tab open.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, opacity: 0.6, fontSize: 12 }}>
+          Pulling Lighthouse data + building recommendations…
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 export default function MetricsPage() {
@@ -182,10 +236,8 @@ export default function MetricsPage() {
       const compactJson = await resCompact.json();
       const rawJson = await resRaw.json();
 
-      if (!resCompact.ok)
-        throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok)
-        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resCompact.ok) throw new Error(compactJson?.error || "Failed to analyze");
+      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -219,27 +271,32 @@ export default function MetricsPage() {
   const scores = data?.scores;
   const lists = useMemo(() => (psiRaw ? extractPsiLists(psiRaw) : null), [psiRaw]);
 
+  const showOverlay = loading || aiLoading;
+  const overlayLabel = aiLoading ? "Generating AI recommendations…" : "Analyzing site performance…";
+
   return (
     <div style={{ padding: 28 }}>
-      {/* TOP ROW: Back button + title */}
+      {showOverlay && <Spinner label={overlayLabel} />}
+
+      {/* Header row: back button + title */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
         <Link
           href="/dashboard"
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 10,
-            padding: "10px 14px",
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(255,255,255,0.04)",
-            color: "rgba(255,255,255,0.9)",
+            gap: 8,
+            padding: "8px 12px",
+            borderRadius: 12,
+            border: "1px solid #333",
+            background: "rgba(255,255,255,0.02)",
+            color: "white",
             textDecoration: "none",
-            lineHeight: 1,
+            fontWeight: 700,
+            fontSize: 13,
           }}
         >
-          <span style={{ fontSize: 16 }}>←</span>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>Back to Dashboard</span>
+          ← Back to Dashboard
         </Link>
 
         <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
@@ -266,7 +323,8 @@ export default function MetricsPage() {
             setStrategy("desktop");
             run("desktop");
           }}
-          style={{ padding: "12px 14px", borderRadius: 12 }}
+          disabled={loading || aiLoading}
+          style={{ padding: "12px 14px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
         >
           Desktop
         </button>
@@ -276,19 +334,16 @@ export default function MetricsPage() {
             setStrategy("mobile");
             run("mobile");
           }}
-          style={{ padding: "12px 14px", borderRadius: 12 }}
+          disabled={loading || aiLoading}
+          style={{ padding: "12px 14px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
         >
           Mobile
         </button>
 
         <button
           onClick={() => run(strategy)}
-          disabled={loading}
-          style={{
-            padding: "12px 18px",
-            borderRadius: 12,
-            opacity: loading ? 0.6 : 1,
-          }}
+          disabled={loading || aiLoading}
+          style={{ padding: "12px 18px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
         >
           {loading ? "Analyzing…" : "Analyze"}
         </button>
@@ -296,11 +351,11 @@ export default function MetricsPage() {
         {psiRaw && (
           <button
             onClick={generateAi}
-            disabled={aiLoading}
+            disabled={aiLoading || loading}
             style={{
               padding: "12px 18px",
               borderRadius: 12,
-              opacity: aiLoading ? 0.6 : 1,
+              opacity: aiLoading || loading ? 0.6 : 1,
             }}
           >
             {aiLoading ? "Generating AI…" : "AI Recommendations"}
@@ -431,9 +486,7 @@ export default function MetricsPage() {
           {lists && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18 }}>
               <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                  Top opportunities (like PageSpeed)
-                </div>
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>Top opportunities (like PageSpeed)</div>
                 {lists.opportunities.length === 0 ? (
                   <div style={{ opacity: 0.8 }}>No opportunities found.</div>
                 ) : (
