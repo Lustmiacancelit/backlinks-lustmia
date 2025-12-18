@@ -14,10 +14,6 @@ type DashboardLayoutProps = {
 
 const navItems = [
   { href: "/dashboard", key: "overview", label: "Overview" },
-
-  // ✅ ADDED: Metrics
-  { href: "/dashboard/metrics", key: "metrics", label: "Metrics" },
-
   {
     href: "/dashboard/backlink-explorer",
     key: "backlink-explorer",
@@ -25,6 +21,7 @@ const navItems = [
   },
   { href: "/dashboard/clients", key: "clients", label: "Clients" },
   { href: "/dashboard/competitors", key: "competitors", label: "Competitors" },
+  { href: "/dashboard/metrics", key: "metrics", label: "Metrics" }, // ✅ added
   { href: "/dashboard/toxic-links", key: "toxic-links", label: "Toxic Links" },
   { href: "/dashboard/billing", key: "billing", label: "Billing" },
   { href: "/dashboard/settings", key: "settings", label: "Settings" },
@@ -39,8 +36,7 @@ export default function DashboardLayout({
   // derive an active key from pathname if not explicitly passed
   const derivedActive =
     active ||
-    (navItems.find((item) => pathname?.startsWith(item.href))?.key ??
-      "overview");
+    (navItems.find((item) => pathname?.startsWith(item.href))?.key ?? "overview");
 
   return (
     <div className="min-h-screen bg-[#05030b] text-white flex">
@@ -94,7 +90,7 @@ export default function DashboardLayout({
         {/* TOP BAR */}
         <header className="sticky top-0 z-20 border-b border-white/10 bg-black/60 backdrop-blur-xl">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-            {/* Left */}
+            {/* Left: logo + contextual text */}
             <div className="flex items-center gap-3 min-w-0">
               <Link
                 href="/dashboard"
@@ -113,21 +109,18 @@ export default function DashboardLayout({
                 </span>
               </Link>
 
-              {/* Context text */}
+              {/* Context text (desktop only) */}
               <div className="hidden md:block text-xs text-white/60 truncate">
-                {derivedActive === "overview" &&
-                  "Overview of your backlinks."}
-
-                {/* ✅ ADDED */}
-                {derivedActive === "metrics" &&
-                  "Website performance, Core Web Vitals & SEO scores."}
-
+                {derivedActive === "overview" && "Overview of your backlinks."}
                 {derivedActive === "backlink-explorer" &&
                   "Inspect individual backlinks & anchors."}
                 {derivedActive === "clients" &&
                   "Manage agency / client workspaces."}
                 {derivedActive === "competitors" &&
                   "Compare your authority with competitors."}
+                {derivedActive === "metrics" &&
+                  "Website performance, Core Web Vitals & recommendations."}{" "}
+                {/* ✅ added */}
                 {derivedActive === "toxic-links" &&
                   "Find and handle spammy / risky links."}
                 {derivedActive === "billing" &&
@@ -137,11 +130,12 @@ export default function DashboardLayout({
               </div>
             </div>
 
-            {/* Right */}
+            {/* Right: plan + upgrade button */}
             <div className="flex items-center gap-2">
               <span className="hidden sm:inline text-xs text-white/60">
                 Plan: <span className="uppercase">Free</span>
               </span>
+              {/* This is your "Upgrade" button that leads to Stripe pricing page */}
               <Link
                 href="/pricing"
                 className="px-3 py-2 rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 text-xs font-semibold hover:opacity-90"
