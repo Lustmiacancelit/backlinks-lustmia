@@ -40,7 +40,7 @@ const PLANS: Record<
     price: 0,
     tagline: "Try the basics.",
     bullets: [
-      "1 scan / day",
+      "0 Pro scans / day (resets daily, UTC)",
       "Up to 50 links",
       "No scan history",
       "No exports",
@@ -53,7 +53,7 @@ const PLANS: Record<
     badge: "Best for Gmail",
     tagline: "For solo founders & creators.",
     bullets: [
-      "20 scans / month",
+      "5 Pro scans / day (resets daily, UTC)",
       "30-day history",
       "Basic toxicity score",
       "CSV export",
@@ -68,7 +68,7 @@ const PLANS: Record<
     highlight: true,
     tagline: "For brands & teams.",
     bullets: [
-      "200 scans / month",
+      "25 Pro scans / day (resets daily, UTC)",
       "12-month history",
       "Competitor tracking",
       "Toxic link clusters",
@@ -82,7 +82,7 @@ const PLANS: Record<
     price: 129,
     tagline: "For multi-client work.",
     bullets: [
-      "1,000 scans / month",
+      "75 Pro scans / day (resets daily, UTC)",
       "Client workspaces",
       "White-label PDFs",
       "Priority queue",
@@ -372,7 +372,7 @@ export default function PricingPage() {
         </section>
 
         <div className="text-xs text-white/50">
-          Cancel anytime. Plans reset monthly. Fair-use protection enabled.
+          Cancel anytime. Limits reset daily (UTC). Fair-use protection enabled.
         </div>
       </div>
     </main>
