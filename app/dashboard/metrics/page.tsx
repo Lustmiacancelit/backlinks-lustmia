@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useMemo, useState, type ReactNode } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type Strategy = "desktop" | "mobile";
@@ -61,13 +62,7 @@ function ScorePie({ value }: { value: number | null }) {
   );
 }
 
-function MetricCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function MetricCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div
       style={{
@@ -131,7 +126,10 @@ function extractPsiLists(psi: any) {
         impact,
       };
     })
-    .sort((a, b) => (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0))
+    .sort(
+      (a, b) =>
+        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
+    )
     .slice(0, 10);
 
   const diagnostics = all
@@ -144,9 +142,10 @@ function extractPsiLists(psi: any) {
     .filter((a) => !!a.title)
     .slice(0, 12);
 
-  // “Failed audits” can be a useful compact list
   const failed = all
-    .filter((a) => a.scoreDisplayMode === "numeric" && typeof a.score === "number" && a.score < 0.9)
+    .filter(
+      (a) => a.scoreDisplayMode === "numeric" && typeof a.score === "number" && a.score < 0.9
+    )
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1))
     .slice(0, 12);
 
@@ -183,8 +182,10 @@ export default function MetricsPage() {
       const compactJson = await resCompact.json();
       const rawJson = await resRaw.json();
 
-      if (!resCompact.ok) throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resCompact.ok)
+        throw new Error(compactJson?.error || "Failed to analyze");
+      if (!resRaw.ok)
+        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -220,7 +221,29 @@ export default function MetricsPage() {
 
   return (
     <div style={{ padding: 28 }}>
-      <h1 style={{ fontSize: 30, fontWeight: 900, marginBottom: 20 }}>Site Metrics</h1>
+      {/* TOP ROW: Back button + title */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+        <Link
+          href="/dashboard"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 14px",
+            borderRadius: 14,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(255,255,255,0.04)",
+            color: "rgba(255,255,255,0.9)",
+            textDecoration: "none",
+            lineHeight: 1,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>←</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Back to Dashboard</span>
+        </Link>
+
+        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
+      </div>
 
       {/* URL + Controls */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
@@ -408,7 +431,9 @@ export default function MetricsPage() {
           {lists && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18 }}>
               <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>Top opportunities (like PageSpeed)</div>
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                  Top opportunities (like PageSpeed)
+                </div>
                 {lists.opportunities.length === 0 ? (
                   <div style={{ opacity: 0.8 }}>No opportunities found.</div>
                 ) : (
