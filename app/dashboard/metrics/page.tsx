@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type Strategy = "desktop" | "mobile";
@@ -133,13 +133,17 @@ function extractPsiLists(psi: any) {
       };
     })
     .sort(
-      (a, b) => (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
+      (a, b) =>
+        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
     )
     .slice(0, 10);
 
   const failed = all
     .filter(
-      (a) => a.scoreDisplayMode === "numeric" && typeof a.score === "number" && a.score < 0.9
+      (a) =>
+        a.scoreDisplayMode === "numeric" &&
+        typeof a.score === "number" &&
+        a.score < 0.9
     )
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1))
     .slice(0, 12);
@@ -206,6 +210,18 @@ function Spinner({ label }: { label: string }) {
   );
 }
 
+/** NEW: same userId helper used in dashboard (so quota aligns) */
+function getOrCreateUserId() {
+  if (typeof window === "undefined") return "anon";
+  const key = "lustmia_proscan_userid";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
 export default function MetricsPage() {
   const [url, setUrl] = useState("https://lustmia.com/");
   const [strategy, setStrategy] = useState<Strategy>("desktop");
@@ -219,6 +235,28 @@ export default function MetricsPage() {
   const [ai, setAi] = useState<any>(null);
 
   const [error, setError] = useState<string | null>(null);
+
+  /** NEW: quota state */
+  const [quota, setQuota] = useState<any>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
+  const [userId, setUserId] = useState<string>("anon");
+
+  /** NEW: load quota once */
+  useEffect(() => {
+    const id = getOrCreateUserId();
+    setUserId(id);
+
+    setQuotaLoading(true);
+    fetch(`/api/proscan/quota?u=${id}`)
+      .then((r) => r.json())
+      .then((d) => setQuota(d))
+      .catch(() => setQuota(null))
+      .finally(() => setQuotaLoading(false));
+  }, []);
+
+  const remaining = quota?.remaining ?? 0;
+  const planName = (quota?.plan ?? "free").toString();
+  const isPro = !!quota?.isPro;
 
   async function run(s: Strategy) {
     setLoading(true);
@@ -236,7 +274,8 @@ export default function MetricsPage() {
       const compactJson = await resCompact.json();
       const rawJson = await resRaw.json();
 
-      if (!resCompact.ok) throw new Error(compactJson?.error || "Failed to analyze");
+      if (!resCompact.ok)
+        throw new Error(compactJson?.error || "Failed to analyze");
       if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
@@ -250,17 +289,30 @@ export default function MetricsPage() {
 
   async function generateAi() {
     if (!psiRaw) return;
+
+    // NEW: client-side lock (server-side will still enforce in step #2)
+    if (!isPro || remaining <= 0) {
+      setError("Upgrade required to unlock AI recommendations.");
+      return;
+    }
+
     setAiLoading(true);
     setAi(null);
     try {
       const r = await fetch("/api/metrics-ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, strategy, psi: psiRaw }),
+        body: JSON.stringify({ url, strategy, psi: psiRaw, userId }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "AI request failed");
       setAi(j);
+
+      // Refresh quota after AI use (keeps “remaining” accurate)
+      fetch(`/api/proscan/quota?u=${userId}`)
+        .then((x) => x.json())
+        .then((d) => setQuota(d))
+        .catch(() => {});
     } catch (e: any) {
       setError(e.message || "AI Error");
     } finally {
@@ -272,14 +324,18 @@ export default function MetricsPage() {
   const lists = useMemo(() => (psiRaw ? extractPsiLists(psiRaw) : null), [psiRaw]);
 
   const showOverlay = loading || aiLoading;
-  const overlayLabel = aiLoading ? "Generating AI recommendations…" : "Analyzing site performance…";
+  const overlayLabel = aiLoading
+    ? "Generating AI recommendations…"
+    : "Analyzing site performance…";
+
+  const aiLocked = !isPro || remaining <= 0;
 
   return (
     <div style={{ padding: 28 }}>
       {showOverlay && <Spinner label={overlayLabel} />}
 
       {/* Header row: back button + title */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
         <Link
           href="/dashboard"
           style={{
@@ -300,6 +356,61 @@ export default function MetricsPage() {
         </Link>
 
         <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
+      </div>
+
+      {/* NEW: Quota strip */}
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          flexWrap: "wrap",
+          marginBottom: 14,
+          opacity: 0.92,
+        }}
+      >
+        <div
+          style={{
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(255,255,255,0.04)",
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          {quotaLoading ? "Checking plan…" : `Plan: ${planName.toUpperCase()}`}
+        </div>
+
+        <div
+          style={{
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(255,255,255,0.04)",
+            fontSize: 12,
+          }}
+        >
+          {quotaLoading ? "…" : <>Pro scans left today: <b>{remaining}</b></>}
+        </div>
+
+        {aiLocked && (
+          <Link
+            href="/pricing"
+            style={{
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid rgba(217,70,239,0.35)",
+              background: "rgba(217,70,239,0.12)",
+              fontSize: 12,
+              fontWeight: 800,
+              color: "white",
+              textDecoration: "none",
+            }}
+          >
+            Upgrade to unlock AI
+          </Link>
+        )}
       </div>
 
       {/* URL + Controls */}
@@ -324,7 +435,11 @@ export default function MetricsPage() {
             run("desktop");
           }}
           disabled={loading || aiLoading}
-          style={{ padding: "12px 14px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            opacity: loading || aiLoading ? 0.6 : 1,
+          }}
         >
           Desktop
         </button>
@@ -335,7 +450,11 @@ export default function MetricsPage() {
             run("mobile");
           }}
           disabled={loading || aiLoading}
-          style={{ padding: "12px 14px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            opacity: loading || aiLoading ? 0.6 : 1,
+          }}
         >
           Mobile
         </button>
@@ -343,7 +462,11 @@ export default function MetricsPage() {
         <button
           onClick={() => run(strategy)}
           disabled={loading || aiLoading}
-          style={{ padding: "12px 18px", borderRadius: 12, opacity: loading || aiLoading ? 0.6 : 1 }}
+          style={{
+            padding: "12px 18px",
+            borderRadius: 12,
+            opacity: loading || aiLoading ? 0.6 : 1,
+          }}
         >
           {loading ? "Analyzing…" : "Analyze"}
         </button>
@@ -351,12 +474,14 @@ export default function MetricsPage() {
         {psiRaw && (
           <button
             onClick={generateAi}
-            disabled={aiLoading || loading}
+            disabled={aiLoading || loading || aiLocked}
             style={{
               padding: "12px 18px",
               borderRadius: 12,
-              opacity: aiLoading || loading ? 0.6 : 1,
+              opacity: aiLoading || loading || aiLocked ? 0.6 : 1,
+              cursor: aiLocked ? "not-allowed" : "pointer",
             }}
+            title={aiLocked ? "Upgrade to unlock AI recommendations" : undefined}
           >
             {aiLoading ? "Generating AI…" : "AI Recommendations"}
           </button>
