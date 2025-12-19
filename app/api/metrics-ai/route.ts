@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+/**
+ * Keep admin client local to this route (uses service role)
+ * so we can read subscriptions + update quota safely.
+ */
 function getSupabaseAdmin() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -24,7 +29,7 @@ function getSupabaseAdmin() {
 }
 
 /**
- * Plan → daily limits (same shape as your quota route).
+ * Plan → daily limits.
  * Defaults can be overridden via env vars:
  *  - PROSCAN_LIMIT_FREE
  *  - PROSCAN_LIMIT_PERSONAL
@@ -52,6 +57,113 @@ function nextUtcMidnightISO() {
   return resetAt.toISOString();
 }
 
+/**
+ * If client doesn't send userId, fall back to Supabase auth cookie.
+ */
+async function getUserIdFromCookie(): Promise<string | null> {
+  try {
+    const supabase = createSupabaseServer();
+    const { data } = await supabase.auth.getUser();
+    return data.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reserve 1 daily token (atomic enough via upsert pattern).
+ * We reserve BEFORE OpenAI to avoid cost blowups.
+ */
+async function reserveDailyToken(params: {
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  limit: number;
+}) {
+  const { supabaseAdmin, userId, limit } = params;
+
+  const now = new Date();
+  const resetAtISO = nextUtcMidnightISO();
+
+  let usedToday = 0;
+
+  // Read current usage
+  const { data: usage } = await supabaseAdmin
+    .from("proscan_usage")
+    .select("used_today, reset_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (usage) {
+    const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
+    if (resetAtDb && resetAtDb > now) {
+      usedToday = usage.used_today || 0;
+    } else {
+      usedToday = 0;
+    }
+  }
+
+  // Ensure row exists with correct resetAt/limit
+  await supabaseAdmin.from("proscan_usage").upsert({
+    user_id: userId,
+    used_today: usedToday,
+    limit,
+    reset_at: resetAtISO,
+  });
+
+  const remaining = Math.max(limit - usedToday, 0);
+  if (remaining <= 0) {
+    return {
+      ok: false as const,
+      limit,
+      usedToday,
+      remaining: 0,
+      resetAt: resetAtISO,
+    };
+  }
+
+  // Reserve slot immediately
+  await supabaseAdmin.from("proscan_usage").upsert({
+    user_id: userId,
+    used_today: usedToday + 1,
+    limit,
+    reset_at: resetAtISO,
+  });
+
+  return {
+    ok: true as const,
+    limit,
+    usedTodayBefore: usedToday,
+    usedTodayAfter: usedToday + 1,
+    remainingAfter: Math.max(limit - (usedToday + 1), 0),
+    resetAt: resetAtISO,
+  };
+}
+
+/**
+ * Best-effort rollback if OpenAI fails (so we don't charge user for failed AI).
+ * This is not perfect under heavy concurrency, but it's a good protection.
+ */
+async function rollbackDailyToken(params: {
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  usedTodayBefore: number;
+  limit: number;
+  resetAtISO: string;
+}) {
+  const { supabaseAdmin, userId, usedTodayBefore, limit, resetAtISO } = params;
+
+  try {
+    await supabaseAdmin.from("proscan_usage").upsert({
+      user_id: userId,
+      used_today: Math.max(usedTodayBefore, 0),
+      limit,
+      reset_at: resetAtISO,
+    });
+  } catch {
+    // ignore rollback failure
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
@@ -59,17 +171,25 @@ export async function POST(req: Request) {
     const url = body?.url;
     const strategy = body?.strategy;
     const psi = body?.psi;
-    const userId = body?.userId;
+
+    // client can send userId; if not, we attempt cookie auth
+    const userIdFromBody = body?.userId;
 
     if (!psi) {
       return NextResponse.json({ error: "Missing psi payload" }, { status: 400 });
     }
 
-    // NEW: userId required so we can enforce subscription + quota
-    if (!userId || typeof userId !== "string") {
+    let userId: string | null =
+      typeof userIdFromBody === "string" ? userIdFromBody : null;
+
+    if (!userId) {
+      userId = await getUserIdFromCookie();
+    }
+
+    if (!userId) {
       return NextResponse.json(
-        { error: "Missing userId" },
-        { status: 400 }
+        { error: "Missing userId (or not authenticated)" },
+        { status: 401 }
       );
     }
 
@@ -101,7 +221,7 @@ export async function POST(req: Request) {
         status = sub.status || status;
       }
     } catch {
-      // If table missing or query fails, treat as free (fail closed)
+      // fail closed
       plan = "free";
       status = "inactive";
     }
@@ -115,56 +235,45 @@ export async function POST(req: Request) {
     }
 
     // ---------------------------------------
-    // 2) Enforce daily limit via proscan_usage
+    // 2) Reserve quota BEFORE OpenAI
     // ---------------------------------------
     const limit = computePlanLimit(plan, status);
-    const resetAtISO = nextUtcMidnightISO();
 
-    let usedToday = 0;
+    // If paid plan is active but limit is 0 for some reason, block (protect costs)
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return NextResponse.json(
+        { error: "AI quota is not available for your plan. Please contact support." },
+        { status: 403 }
+      );
+    }
+
+    let reservation:
+      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
+      | null = null;
 
     try {
-      const now = new Date();
-
-      const { data: usage } = await supabaseAdmin
-        .from("proscan_usage")
-        .select("used_today, reset_at, limit")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (usage) {
-        const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
-
-        if (resetAtDb && resetAtDb > now) {
-          usedToday = usage.used_today || 0;
-        } else {
-          usedToday = 0;
-        }
-      }
-
-      // keep usage row synced (limit + reset)
-      await supabaseAdmin.from("proscan_usage").upsert({
-        user_id: userId,
-        used_today: usedToday,
-        limit,
-        reset_at: resetAtISO,
-      });
+      reservation = await reserveDailyToken({ supabaseAdmin, userId, limit });
     } catch {
-      // If usage table missing, fail closed to avoid cost blowups
       return NextResponse.json(
         { error: "Usage tracking unavailable. Please contact support." },
         { status: 503 }
       );
     }
 
-    if (usedToday >= limit) {
+    if (!reservation.ok) {
       return NextResponse.json(
-        { error: "Daily limit reached. Please try again tomorrow or upgrade." },
+        {
+          error: "Daily limit reached. Please try again tomorrow or upgrade.",
+          limit: reservation.limit,
+          remaining: 0,
+          resetAt: reservation.resetAt,
+        },
         { status: 429 }
       );
     }
 
     // ---------------------------------------
-    // 3) Run OpenAI (same as your original)
+    // 3) Run OpenAI
     // ---------------------------------------
     const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
@@ -206,8 +315,7 @@ ${JSON.stringify(psi).slice(0, 180000)}
       body: JSON.stringify({
         model,
         input: prompt,
-
-        // Strongly encourages valid JSON output
+        // strongly encourages valid JSON output
         text: {
           format: {
             type: "json_schema",
@@ -258,6 +366,15 @@ ${JSON.stringify(psi).slice(0, 180000)}
     const data = await r.json();
 
     if (!r.ok) {
+      // rollback reservation best-effort
+      await rollbackDailyToken({
+        supabaseAdmin,
+        userId,
+        usedTodayBefore: reservation.usedTodayBefore,
+        limit,
+        resetAtISO: reservation.resetAt,
+      });
+
       return NextResponse.json(
         { error: data?.error?.message || "AI request failed" },
         { status: 400 }
@@ -270,6 +387,15 @@ ${JSON.stringify(psi).slice(0, 180000)}
       null;
 
     if (!text) {
+      // rollback reservation best-effort
+      await rollbackDailyToken({
+        supabaseAdmin,
+        userId,
+        usedTodayBefore: reservation.usedTodayBefore,
+        limit,
+        resetAtISO: reservation.resetAt,
+      });
+
       return NextResponse.json({ error: "No AI output" }, { status: 500 });
     }
 
@@ -277,6 +403,15 @@ ${JSON.stringify(psi).slice(0, 180000)}
     try {
       parsed = JSON.parse(text);
     } catch {
+      // rollback reservation best-effort
+      await rollbackDailyToken({
+        supabaseAdmin,
+        userId,
+        usedTodayBefore: reservation.usedTodayBefore,
+        limit,
+        resetAtISO: reservation.resetAt,
+      });
+
       return NextResponse.json(
         { error: "AI did not return valid JSON", raw: text },
         { status: 500 }
@@ -284,19 +419,8 @@ ${JSON.stringify(psi).slice(0, 180000)}
     }
 
     // ---------------------------------------
-    // 4) Consume 1 daily credit on success
+    // 4) Quota already consumed (reserved before OpenAI)
     // ---------------------------------------
-    try {
-      await supabaseAdmin.from("proscan_usage").upsert({
-        user_id: userId,
-        used_today: usedToday + 1,
-        limit,
-        reset_at: resetAtISO,
-      });
-    } catch {
-      // Best-effort; still return the AI result (don't punish the user)
-    }
-
     return NextResponse.json(parsed);
   } catch (e: any) {
     return NextResponse.json(

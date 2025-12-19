@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
 
+// ✅ NEW: reuse your shared quota + subscription logic
+import {
+  computePlanLimit,
+  getSupabaseAdmin as getSupabaseAdminFromLib,
+  getUserSubscription,
+  consumeDailyQuota,
+} from "@/lib/proscanQuota";
+
 type ScanRequest = {
   url: string;
   userId: string;
@@ -123,61 +131,64 @@ export async function POST(req: Request) {
       );
     }
 
+    // Keep your existing admin client (not removing it)
     const supabaseAdmin = getSupabaseAdmin();
+
+    // ✅ NEW: use shared helper admin client too (same envs, safe)
+    const supabaseAdminLib = getSupabaseAdminFromLib();
+
     const target = normalizeUrl(body.url);
     const userId = body.userId;
 
     // -----------------------------
-    // QUOTA CHECK (if table exists)
+    // QUOTA CHECK (plan-based + paid-only)
     // -----------------------------
     let remaining: number | null = null;
     let limit: number | null = null;
-    let resetAt: Date | null = null;
+    let resetAt: string | null = null;
 
     try {
-      limit = Number(process.env.PROSCAN_DAILY_LIMIT || 3);
-      const today = new Date();
-      const reset = new Date(today);
-      reset.setUTCHours(24, 0, 0, 0);
+      // 1) subscription
+      const { plan, status } = await getUserSubscription(supabaseAdminLib, userId);
 
-      resetAt = reset;
+      // 2) only paid active can run ProScan
+      const isPaidActive = status === "active" && plan !== "free";
+      if (!isPaidActive) {
+        return NextResponse.json(
+          { error: "Upgrade required to run Pro scans." },
+          { status: 402 }
+        );
+      }
 
-      const { data: usage } = await supabaseAdmin
-        .from("proscan_usage")
-        .select("*")
-        .eq("user_id", userId)
-        .single();
+      // 3) per-plan limit (uses PROSCAN_LIMIT_* env vars)
+      limit = computePlanLimit(plan, status);
 
-      const usedToday =
-        usage?.used_today && usage?.reset_at
-          ? new Date(usage.reset_at) > today
-            ? usage.used_today
-            : 0
-          : 0;
+      // 4) consume quota BEFORE Browserless (protects your costs)
+      const q = await consumeDailyQuota(supabaseAdminLib, userId, limit);
 
-      remaining = Math.max(limit - usedToday, 0);
+      resetAt = q.resetAt ?? null;
 
-      if (remaining <= 0) {
+      if (!q.ok) {
         return NextResponse.json(
           {
             error: "Daily pro scan limit reached",
-            limit,
+            limit: q.limit,
             remaining: 0,
-            resetAt,
+            resetAt: q.resetAt,
           },
           { status: 429 }
         );
       }
 
-      // Update usage immediately (reserve slot)
-      await supabaseAdmin.from("proscan_usage").upsert({
-        user_id: userId,
-        used_today: usedToday + 1,
-        limit,
-        reset_at: resetAt.toISOString(),
-      });
+      // If ok, compute remaining
+      remaining = q.remaining ?? null;
+      limit = q.limit ?? limit;
     } catch {
-      // If proscan_usage doesn't exist yet, just skip quota
+      // if subscription/quota tables are missing, fail closed to protect you
+      return NextResponse.json(
+        { error: "Usage tracking unavailable. Please contact support." },
+        { status: 503 }
+      );
     }
 
     // -----------------------------
@@ -196,7 +207,7 @@ export async function POST(req: Request) {
       sample: outboundLinks.slice(0, 25),
       limit,
       remaining,
-      resetAt: resetAt?.toISOString() ?? null,
+      resetAt,
     };
 
     // -----------------------------
