@@ -44,12 +44,17 @@ function trendToScore(deltaPct: number) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const domain = (searchParams.get("domain") || searchParams.get("target") || "").trim();
+    const domain = (
+      searchParams.get("domain") ||
+      searchParams.get("target") ||
+      ""
+    ).trim();
+
     const url = toHttps(domain);
 
     if (!url) {
       return NextResponse.json(
-        { error: "Missing ?domain= (or ?target=) parameter" }
+        { error: "Missing ?domain= (or ?target=) parameter" },
         { status: 400 }
       );
     }
@@ -62,7 +67,10 @@ export async function GET(req: Request) {
 
     if (!supabaseUrl || !serviceRole) {
       return NextResponse.json(
-        { error: "Missing SUPABASE env vars (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)" },
+        {
+          error:
+            "Missing SUPABASE env vars (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
+        },
         { status: 500 }
       );
     }
@@ -70,15 +78,6 @@ export async function GET(req: Request) {
     const supabase = createClient(supabaseUrl, serviceRole, {
       auth: { persistSession: false },
     });
-
-    /**
-     * ASSUMPTION: you store scans per domain.
-     * Adjust table/columns to your schema:
-     * - scans table: { id, domain, created_at }
-     * - backlinks table: { id, scan_id, created_at, is_toxic, referring_domain }
-     *
-     * If your schema differs, tell me your tables/columns and I’ll map it exactly.
-     */
 
     // Latest scan for this domain
     const { data: latestScan, error: scanErr } = await supabase
@@ -98,7 +97,6 @@ export async function GET(req: Request) {
 
     // If no scan yet, still return something usable
     if (!latestScan?.id) {
-      // Optional: still fetch PageSpeed and return zeros
       return NextResponse.json({
         domain,
         fetchedUrl: url,
@@ -114,7 +112,7 @@ export async function GET(req: Request) {
 
     const scanId = latestScan.id;
 
-    // Get backlinks for latest scan (count, toxic count, distinct referring domains)
+    // Get backlinks for latest scan
     const { data: backlinks, error: blErr } = await supabase
       .from("backlinks")
       .select("id, created_at, is_toxic, referring_domain")
@@ -147,8 +145,7 @@ export async function GET(req: Request) {
     const spamPct =
       totalBacklinks > 0 ? (toxicBacklinks / totalBacklinks) * 100 : 0;
 
-    // Authority trend: compare last 30 days referring domains vs previous 30 days
-    // (Uses scan history + backlinks per scan)
+    // Authority trend (last 30 vs prev 30 days)
     const since = new Date();
     since.setDate(since.getDate() - 60);
 
@@ -166,12 +163,11 @@ export async function GET(req: Request) {
       );
     }
 
-    // Collect referring domains by time window from those scans
     const mid = new Date();
     mid.setDate(mid.getDate() - 30);
 
-    let rdLast30 = new Set<string>();
-    let rdPrev30 = new Set<string>();
+    const rdLast30 = new Set<string>();
+    const rdPrev30 = new Set<string>();
 
     if ((recentScans ?? []).length > 0) {
       const scanIds = (recentScans ?? []).map((s) => s.id);
@@ -201,17 +197,19 @@ export async function GET(req: Request) {
     const last30Count = rdLast30.size;
     const prev30Count = rdPrev30.size;
 
-    // deltaPct: (last - prev)/prev * 100
     const deltaPct =
-      prev30Count > 0 ? ((last30Count - prev30Count) / prev30Count) * 100 : (last30Count > 0 ? 100 : 0);
+      prev30Count > 0
+        ? ((last30Count - prev30Count) / prev30Count) * 100
+        : last30Count > 0
+        ? 100
+        : 0;
 
-    // Convert to 0..100 bars
     const authorityTrend = trendToScore(deltaPct);
     const backlinkVelocity = velocityToScore(linksPerDay);
     const spamRisk = spamToScore(spamPct);
 
     // -----------------------------
-    // 2) Optional: PageSpeed scores (keep what you already had)
+    // 2) Optional: PageSpeed scores
     // -----------------------------
     const key = process.env.PAGESPEED_API_KEY;
     const psiUrl =
@@ -240,7 +238,7 @@ export async function GET(req: Request) {
         };
       }
     } catch {
-      // ignore PSI failures; backlink metrics still return
+      // ignore PSI failures
     }
 
     return NextResponse.json({
@@ -262,9 +260,9 @@ export async function GET(req: Request) {
         deltaPct: Number(deltaPct.toFixed(2)),
       },
       siteHealth: {
-        authorityTrend,   // 0..100
-        backlinkVelocity, // 0..100
-        spamRisk,         // 0..100 (risk)
+        authorityTrend,
+        backlinkVelocity,
+        spamRisk,
       },
       pageSpeed,
     });
