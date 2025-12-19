@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,13 +20,11 @@ export const metadata: Metadata = {
   },
   description:
     "Lustmia Pro — Backlink intelligence, toxicity detection, competitor analysis, and automated SEO monitoring.",
-
   icons: {
-    icon: "/favicon.ico", // put favicon.ico in /public
+    icon: "/favicon.ico",
     shortcut: "/favicon.ico",
-    apple: "/apple-touch-icon.png", // optional – if you add this in /public
+    apple: "/apple-touch-icon.png",
   },
-
   openGraph: {
     title: "Lustmia Pro",
     description:
@@ -34,7 +33,6 @@ export const metadata: Metadata = {
     siteName: "Lustmia Pro",
     type: "website",
   },
-
   twitter: {
     card: "summary_large_image",
     title: "Lustmia Pro",
@@ -54,6 +52,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#05030b] text-white`}
       >
         {children}
+        <SpeedInsights />
       </body>
     </html>
   );
