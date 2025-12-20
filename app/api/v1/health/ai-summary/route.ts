@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+// ✅ Added: ensure this route is never cached
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
  * Admin Supabase client (service role) to bypass RLS.
  */
