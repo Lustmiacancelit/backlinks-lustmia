@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type Strategy = "desktop" | "mobile";
 
@@ -222,6 +223,18 @@ function getOrCreateUserId() {
   return id;
 }
 
+/** NEW: superuser allowlist helper (client-safe) */
+function isEmailSuperUser(email?: string | null) {
+  const raw = process.env.NEXT_PUBLIC_SUPERUSER_EMAILS || "";
+  const list = raw
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!email) return false;
+  return list.includes(email.trim().toLowerCase());
+}
+
 export default function MetricsPage() {
   const [url, setUrl] = useState("https://lustmia.com/");
   const [strategy, setStrategy] = useState<Strategy>("desktop");
@@ -240,6 +253,24 @@ export default function MetricsPage() {
   const [quota, setQuota] = useState<any>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [userId, setUserId] = useState<string>("anon");
+
+  /** NEW: superuser state (based on logged-in Supabase email) */
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  const isSuperUser = useMemo(() => isEmailSuperUser(userEmail), [userEmail]);
+
+  /** NEW: load logged-in user once (for superuser bypass) */
+  useEffect(() => {
+    const supabase = createClientComponentClient();
+    supabase.auth
+      .getUser()
+      .then(({ data, error }) => {
+        if (error) return;
+        const email = data?.user?.email ?? null;
+        setUserEmail(email);
+      })
+      .catch(() => {});
+  }, []);
 
   /** NEW: load quota once */
   useEffect(() => {
@@ -291,7 +322,8 @@ export default function MetricsPage() {
     if (!psiRaw) return;
 
     // NEW: client-side lock (server-side will still enforce in step #2)
-    if (!isPro || remaining <= 0) {
+    // Superusers bypass this lock.
+    if (!isSuperUser && (!isPro || remaining <= 0)) {
       setError("Upgrade required to unlock AI recommendations.");
       return;
     }
@@ -328,7 +360,8 @@ export default function MetricsPage() {
     ? "Generating AI recommendations…"
     : "Analyzing site performance…";
 
-  const aiLocked = !isPro || remaining <= 0;
+  // Superusers bypass AI lock in UI
+  const aiLocked = (!isPro || remaining <= 0) && !isSuperUser;
 
   return (
     <div style={{ padding: 28 }}>
