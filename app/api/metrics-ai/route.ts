@@ -4,6 +4,8 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+const ADMIN_EMAIL = "sales@lustmia.com";
+
 /**
  * Keep admin client local to this route (uses service role)
  * so we can read subscriptions + update quota safely.
@@ -58,16 +60,27 @@ function nextUtcMidnightISO() {
 }
 
 /**
- * If client doesn't send userId, fall back to Supabase auth cookie.
+ * Read Supabase auth cookie user (id + email).
  */
-async function getUserIdFromCookie(): Promise<string | null> {
+async function getAuthedUserFromCookie(): Promise<{
+  id: string | null;
+  email: string | null;
+}> {
   try {
     const supabase = createSupabaseServer();
     const { data } = await supabase.auth.getUser();
-    return data.user?.id ?? null;
+    return {
+      id: data.user?.id ?? null,
+      email: data.user?.email?.toLowerCase() ?? null,
+    };
   } catch {
-    return null;
+    return { id: null, email: null };
   }
+}
+
+function isAdminEmail(email?: string | null) {
+  if (!email) return false;
+  return email.toLowerCase() === ADMIN_EMAIL;
 }
 
 /**
@@ -141,7 +154,7 @@ async function reserveDailyToken(params: {
 
 /**
  * Best-effort rollback if OpenAI fails (so we don't charge user for failed AI).
- * This is not perfect under heavy concurrency, but it's a good protection.
+ * Not perfect under concurrency, but protects users.
  */
 async function rollbackDailyToken(params: {
   supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
@@ -172,104 +185,113 @@ export async function POST(req: Request) {
     const strategy = body?.strategy;
     const psi = body?.psi;
 
-    // client can send userId; if not, we attempt cookie auth
-    const userIdFromBody = body?.userId;
-
     if (!psi) {
       return NextResponse.json({ error: "Missing psi payload" }, { status: 400 });
     }
 
-    let userId: string | null =
-      typeof userIdFromBody === "string" ? userIdFromBody : null;
-
-    if (!userId) {
-      userId = await getUserIdFromCookie();
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
     }
 
-    if (!userId) {
+    // Identify logged-in user by cookie (this is what we trust for admin bypass)
+    const authed = await getAuthedUserFromCookie();
+    const admin = isAdminEmail(authed.email);
+
+    // Determine userId (body may send anon id, but if logged in we prefer Supabase id)
+    const userIdFromBody = typeof body?.userId === "string" ? body.userId : null;
+    const userId =
+      authed.id ||
+      userIdFromBody ||
+      (admin ? `admin-${ADMIN_EMAIL}` : null);
+
+    // Non-admin must have some userId
+    if (!userId && !admin) {
       return NextResponse.json(
         { error: "Missing userId (or not authenticated)" },
         { status: 401 }
       );
     }
 
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (!openaiKey) {
-      return NextResponse.json(
-        { error: "Missing OPENAI_API_KEY" },
-        { status: 500 }
-      );
-    }
-
     const supabaseAdmin = getSupabaseAdmin();
 
     // ---------------------------------------
-    // 1) Verify subscription is active + paid
+    // 1) Admin bypass: skip subscription + quota
     // ---------------------------------------
-    let plan = "free";
-    let status = "inactive";
-
-    try {
-      const { data: sub } = await supabaseAdmin
-        .from("proscan_subscriptions")
-        .select("plan,status")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (sub) {
-        plan = (sub.plan || plan).toLowerCase();
-        status = sub.status || status;
-      }
-    } catch {
-      // fail closed
-      plan = "free";
-      status = "inactive";
-    }
-
-    const isPaidActive = status === "active" && plan !== "free";
-    if (!isPaidActive) {
-      return NextResponse.json(
-        { error: "Upgrade required to unlock AI recommendations." },
-        { status: 402 }
-      );
-    }
-
-    // ---------------------------------------
-    // 2) Reserve quota BEFORE OpenAI
-    // ---------------------------------------
-    const limit = computePlanLimit(plan, status);
-
-    // If paid plan is active but limit is 0 for some reason, block (protect costs)
-    if (!Number.isFinite(limit) || limit <= 0) {
-      return NextResponse.json(
-        { error: "AI quota is not available for your plan. Please contact support." },
-        { status: 403 }
-      );
-    }
-
     let reservation:
       | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
       | null = null;
 
-    try {
-      reservation = await reserveDailyToken({ supabaseAdmin, userId, limit });
-    } catch {
-      return NextResponse.json(
-        { error: "Usage tracking unavailable. Please contact support." },
-        { status: 503 }
-      );
-    }
+    let limit = 0;
 
-    if (!reservation.ok) {
-      return NextResponse.json(
-        {
-          error: "Daily limit reached. Please try again tomorrow or upgrade.",
-          limit: reservation.limit,
-          remaining: 0,
-          resetAt: reservation.resetAt,
-        },
-        { status: 429 }
-      );
+    if (!admin) {
+      // ---------------------------------------
+      // 1a) Verify subscription is active + paid
+      // ---------------------------------------
+      let plan = "free";
+      let status = "inactive";
+
+      try {
+        const { data: sub } = await supabaseAdmin
+          .from("proscan_subscriptions")
+          .select("plan,status")
+          .eq("user_id", userId!)
+          .maybeSingle();
+
+        if (sub) {
+          plan = (sub.plan || plan).toLowerCase();
+          status = sub.status || status;
+        }
+      } catch {
+        // fail closed
+        plan = "free";
+        status = "inactive";
+      }
+
+      const isPaidActive = status === "active" && plan !== "free";
+      if (!isPaidActive) {
+        return NextResponse.json(
+          { error: "Upgrade required to unlock AI recommendations." },
+          { status: 402 }
+        );
+      }
+
+      // ---------------------------------------
+      // 2) Reserve quota BEFORE OpenAI
+      // ---------------------------------------
+      limit = computePlanLimit(plan, status);
+
+      if (!Number.isFinite(limit) || limit <= 0) {
+        return NextResponse.json(
+          { error: "AI quota is not available for your plan. Please contact support." },
+          { status: 403 }
+        );
+      }
+
+      try {
+        reservation = await reserveDailyToken({
+          supabaseAdmin,
+          userId: userId!,
+          limit,
+        });
+      } catch {
+        return NextResponse.json(
+          { error: "Usage tracking unavailable. Please contact support." },
+          { status: 503 }
+        );
+      }
+
+      if (!reservation.ok) {
+        return NextResponse.json(
+          {
+            error: "Daily limit reached. Please try again tomorrow or upgrade.",
+            limit: reservation.limit,
+            remaining: 0,
+            resetAt: reservation.resetAt,
+          },
+          { status: 429 }
+        );
+      }
     }
 
     // ---------------------------------------
@@ -315,7 +337,6 @@ ${JSON.stringify(psi).slice(0, 180000)}
       body: JSON.stringify({
         model,
         input: prompt,
-        // strongly encourages valid JSON output
         text: {
           format: {
             type: "json_schema",
@@ -366,14 +387,16 @@ ${JSON.stringify(psi).slice(0, 180000)}
     const data = await r.json();
 
     if (!r.ok) {
-      // rollback reservation best-effort
-      await rollbackDailyToken({
-        supabaseAdmin,
-        userId,
-        usedTodayBefore: reservation.usedTodayBefore,
-        limit,
-        resetAtISO: reservation.resetAt,
-      });
+      // rollback reservation best-effort (non-admin only)
+      if (!admin && reservation && reservation.ok) {
+        await rollbackDailyToken({
+          supabaseAdmin,
+          userId: userId!,
+          usedTodayBefore: reservation.usedTodayBefore,
+          limit,
+          resetAtISO: reservation.resetAt,
+        });
+      }
 
       return NextResponse.json(
         { error: data?.error?.message || "AI request failed" },
@@ -381,20 +404,18 @@ ${JSON.stringify(psi).slice(0, 180000)}
       );
     }
 
-    const text =
-      data?.output?.[0]?.content?.[0]?.text ??
-      data?.output_text ??
-      null;
+    const text = data?.output?.[0]?.content?.[0]?.text ?? data?.output_text ?? null;
 
     if (!text) {
-      // rollback reservation best-effort
-      await rollbackDailyToken({
-        supabaseAdmin,
-        userId,
-        usedTodayBefore: reservation.usedTodayBefore,
-        limit,
-        resetAtISO: reservation.resetAt,
-      });
+      if (!admin && reservation && reservation.ok) {
+        await rollbackDailyToken({
+          supabaseAdmin,
+          userId: userId!,
+          usedTodayBefore: reservation.usedTodayBefore,
+          limit,
+          resetAtISO: reservation.resetAt,
+        });
+      }
 
       return NextResponse.json({ error: "No AI output" }, { status: 500 });
     }
@@ -403,14 +424,15 @@ ${JSON.stringify(psi).slice(0, 180000)}
     try {
       parsed = JSON.parse(text);
     } catch {
-      // rollback reservation best-effort
-      await rollbackDailyToken({
-        supabaseAdmin,
-        userId,
-        usedTodayBefore: reservation.usedTodayBefore,
-        limit,
-        resetAtISO: reservation.resetAt,
-      });
+      if (!admin && reservation && reservation.ok) {
+        await rollbackDailyToken({
+          supabaseAdmin,
+          userId: userId!,
+          usedTodayBefore: reservation.usedTodayBefore,
+          limit,
+          resetAtISO: reservation.resetAt,
+        });
+      }
 
       return NextResponse.json(
         { error: "AI did not return valid JSON", raw: text },
@@ -418,9 +440,6 @@ ${JSON.stringify(psi).slice(0, 180000)}
       );
     }
 
-    // ---------------------------------------
-    // 4) Quota already consumed (reserved before OpenAI)
-    // ---------------------------------------
     return NextResponse.json(parsed);
   } catch (e: any) {
     return NextResponse.json(
