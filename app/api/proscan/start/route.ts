@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
-// ✅ NEW: reuse your shared quota + subscription logic
+// ✅ reuse your shared quota + subscription logic
 import {
   computePlanLimit,
   getSupabaseAdmin as getSupabaseAdminFromLib,
@@ -14,6 +15,12 @@ type ScanRequest = {
   url: string;
   userId: string;
 };
+
+// ONLY this email should be master/admin
+const ADMIN_EMAIL = "sales@lustmia.com";
+
+// For admin we return a huge daily limit so UI never gates
+const ADMIN_DAILY_LIMIT = 999999;
 
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -124,9 +131,28 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ScanRequest;
 
-    if (!body?.url || !body?.userId) {
+    if (!body?.url) {
+      return NextResponse.json({ error: "Missing url" }, { status: 400 });
+    }
+
+    // -----------------------------
+    // AUTH (required for admin bypass)
+    // -----------------------------
+    let authedEmail: string | null = null;
+    try {
+      const supabaseAuth = createSupabaseServer();
+      const { data } = await supabaseAuth.auth.getUser();
+      authedEmail = data?.user?.email?.toLowerCase() ?? null;
+    } catch {
+      authedEmail = null;
+    }
+
+    const isAdmin = authedEmail === ADMIN_EMAIL;
+
+    // For normal users, we still require userId from the client
+    if (!isAdmin && !body?.userId) {
       return NextResponse.json(
-        { error: "Missing url or userId" },
+        { error: "Missing userId" },
         { status: 400 }
       );
     }
@@ -134,14 +160,55 @@ export async function POST(req: Request) {
     // Keep your existing admin client (not removing it)
     const supabaseAdmin = getSupabaseAdmin();
 
-    // ✅ NEW: use shared helper admin client too (same envs, safe)
+    // ✅ Shared helper admin client too (same envs, safe)
     const supabaseAdminLib = getSupabaseAdminFromLib();
 
     const target = normalizeUrl(body.url);
-    const userId = body.userId;
+
+    // Use incoming userId for normal users
+    // For admin, tie scans to a stable id (doesn't matter for quota because we skip it)
+    const userId = isAdmin ? `admin-${ADMIN_EMAIL}` : body.userId;
 
     // -----------------------------
-    // QUOTA CHECK (plan-based + paid-only)
+    // ADMIN SHORT-CIRCUIT:
+    // skip subscription/quota checks and do NOT decrement usage
+    // -----------------------------
+    if (isAdmin) {
+      const html = await fetchRenderedHTML(target);
+      const outboundLinks = extractOutboundLinks(html, target);
+
+      const targetHost = new URL(target).hostname.replace(/^www\./, "");
+      const refDomains = uniqueRefDomains(outboundLinks, targetHost);
+
+      const result = {
+        target,
+        totalBacklinks: outboundLinks.length,
+        refDomains: refDomains.length,
+        sample: outboundLinks.slice(0, 25),
+        limit: ADMIN_DAILY_LIMIT,
+        remaining: ADMIN_DAILY_LIMIT,
+        resetAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      // Store scan (best effort)
+      try {
+        await supabaseAdmin.from("proscan_scans").insert({
+          user_id: userId,
+          target,
+          total_backlinks: result.totalBacklinks,
+          ref_domains: result.refDomains,
+          sample: result.sample,
+          created_at: new Date().toISOString(),
+        });
+      } catch {
+        // ignore if table doesn't exist
+      }
+
+      return NextResponse.json(result);
+    }
+
+    // -----------------------------
+    // NORMAL USERS: QUOTA CHECK (plan-based + paid-only)
     // -----------------------------
     let remaining: number | null = null;
     let limit: number | null = null;
@@ -149,7 +216,10 @@ export async function POST(req: Request) {
 
     try {
       // 1) subscription
-      const { plan, status } = await getUserSubscription(supabaseAdminLib, userId);
+      const { plan, status } = await getUserSubscription(
+        supabaseAdminLib,
+        userId
+      );
 
       // 2) only paid active can run ProScan
       const isPaidActive = status === "active" && plan !== "free";
@@ -160,10 +230,10 @@ export async function POST(req: Request) {
         );
       }
 
-      // 3) per-plan limit (uses PROSCAN_LIMIT_* env vars)
+      // 3) per-plan limit
       limit = computePlanLimit(plan, status);
 
-      // 4) consume quota BEFORE Browserless (protects your costs)
+      // 4) consume quota BEFORE Browserless
       const q = await consumeDailyQuota(supabaseAdminLib, userId, limit);
 
       resetAt = q.resetAt ?? null;
@@ -180,11 +250,9 @@ export async function POST(req: Request) {
         );
       }
 
-      // If ok, compute remaining
       remaining = q.remaining ?? null;
       limit = q.limit ?? limit;
     } catch {
-      // if subscription/quota tables are missing, fail closed to protect you
       return NextResponse.json(
         { error: "Usage tracking unavailable. Please contact support." },
         { status: 503 }
@@ -235,8 +303,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: friendly, // 👈 show this to the user
-        technical: e?.message || "Pro scan failed", // 👈 keep for debugging/logs
+        error: friendly,
+        technical: e?.message || "Pro scan failed",
       },
       { status: 500 }
     );
