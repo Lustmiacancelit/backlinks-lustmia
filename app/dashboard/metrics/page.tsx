@@ -223,16 +223,10 @@ function getOrCreateUserId() {
   return id;
 }
 
-/** NEW: superuser allowlist helper (client-safe) */
-function isEmailSuperUser(email?: string | null) {
-  const raw = process.env.NEXT_PUBLIC_SUPERUSER_EMAILS || "";
-  const list = raw
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-
+/** UPDATED: Admin check — single owner account */
+function isAdminEmail(email?: string | null) {
   if (!email) return false;
-  return list.includes(email.trim().toLowerCase());
+  return email.toLowerCase() === "sales@lustmia.com";
 }
 
 export default function MetricsPage() {
@@ -255,12 +249,10 @@ export default function MetricsPage() {
   const [userId, setUserId] = useState<string>("anon");
   const [isAdmin, setIsAdmin] = useState(false);
 
-  /** NEW: superuser state (based on logged-in Supabase email) */
+  /** UPDATED: admin state (based on logged-in Supabase email) */
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  const isSuperUser = useMemo(() => isEmailSuperUser(userEmail), [userEmail]);
-
-  /** NEW: load logged-in user once (for superuser bypass) */
+  /** UPDATED: load logged-in user once (for admin bypass) */
   useEffect(() => {
     let mounted = true;
 
@@ -275,7 +267,7 @@ export default function MetricsPage() {
 
           const email = data?.user?.email ?? null;
           setUserEmail(email);
-          setIsAdmin(isEmailSuperUser(email)); // <- superuser => admin bypass
+          setIsAdmin(isAdminEmail(email)); // <- admin bypass
         })
         .catch(() => {});
     } catch {
@@ -338,7 +330,7 @@ export default function MetricsPage() {
     if (!psiRaw) return;
 
     // NEW: client-side lock (server-side will still enforce in step #2)
-    // Superusers/admin bypass this lock.
+    // Admin bypasses this lock.
     if (!isAdmin && (!isPro || remaining <= 0)) {
       setError("Upgrade required to unlock AI recommendations.");
       return;
@@ -379,8 +371,8 @@ export default function MetricsPage() {
     ? "Generating AI recommendations…"
     : "Analyzing site performance…";
 
-  // Superusers/admin bypass AI lock in UI
-  const aiLocked = (!isPro || remaining <= 0) && !isAdmin;
+  // UPDATED: Admin bypass AI lock in UI
+  const aiLocked = !isAdmin && (!isPro || remaining <= 0);
 
   return (
     <div style={{ padding: 28 }}>
