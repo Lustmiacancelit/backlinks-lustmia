@@ -262,16 +262,29 @@ export default function MetricsPage() {
 
   /** NEW: load logged-in user once (for superuser bypass) */
   useEffect(() => {
-    const supabase = createClientComponentClient();
-    supabase.auth
-      .getUser()
-      .then(({ data, error }) => {
-        if (error) return;
-        const email = data?.user?.email ?? null;
-        setUserEmail(email);
-        setIsAdmin(isEmailSuperUser(email)); // <- superuser => admin bypass
-      })
-      .catch(() => {});
+    let mounted = true;
+
+    try {
+      const supabase = createClientComponentClient();
+
+      supabase.auth
+        .getUser()
+        .then(({ data, error }) => {
+          if (!mounted) return;
+          if (error) return;
+
+          const email = data?.user?.email ?? null;
+          setUserEmail(email);
+          setIsAdmin(isEmailSuperUser(email)); // <- superuser => admin bypass
+        })
+        .catch(() => {});
+    } catch {
+      // If Supabase client cannot be created (rare hydration issues), do nothing.
+    }
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   /** NEW: load quota once */
@@ -309,7 +322,8 @@ export default function MetricsPage() {
 
       if (!resCompact.ok)
         throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resRaw.ok)
+        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -355,7 +369,10 @@ export default function MetricsPage() {
   }
 
   const scores = data?.scores;
-  const lists = useMemo(() => (psiRaw ? extractPsiLists(psiRaw) : null), [psiRaw]);
+  const lists = useMemo(
+    () => (psiRaw ? extractPsiLists(psiRaw) : null),
+    [psiRaw]
+  );
 
   const showOverlay = loading || aiLoading;
   const overlayLabel = aiLoading
@@ -370,7 +387,14 @@ export default function MetricsPage() {
       {showOverlay && <Spinner label={overlayLabel} />}
 
       {/* Header row: back button + title */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 10,
+        }}
+      >
         <Link
           href="/dashboard"
           style={{
@@ -390,7 +414,9 @@ export default function MetricsPage() {
           ← Back to Dashboard
         </Link>
 
-        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
+        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>
+          Site Metrics
+        </h1>
       </div>
 
       {/* NEW: Quota strip */}
@@ -414,7 +440,9 @@ export default function MetricsPage() {
             fontWeight: 700,
           }}
         >
-          {quotaLoading ? "Checking plan…" : `Plan: ${(isAdmin ? "ADMIN" : planName.toUpperCase())}`}
+          {quotaLoading
+            ? "Checking plan…"
+            : `Plan: ${isAdmin ? "ADMIN" : planName.toUpperCase()}`}
         </div>
 
         <div
@@ -426,7 +454,13 @@ export default function MetricsPage() {
             fontSize: 12,
           }}
         >
-          {quotaLoading ? "…" : <>Pro scans left today: <b>{isAdmin ? "∞" : remaining}</b></>}
+          {quotaLoading ? (
+            "…"
+          ) : (
+            <>
+              Pro scans left today: <b>{isAdmin ? "∞" : remaining}</b>
+            </>
+          )}
         </div>
 
         {aiLocked && (
@@ -524,7 +558,14 @@ export default function MetricsPage() {
       </div>
 
       {error && (
-        <div style={{ padding: 14, borderRadius: 12, border: "1px solid #733", marginBottom: 20 }}>
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 12,
+            border: "1px solid #733",
+            marginBottom: 20,
+          }}
+        >
           {error}
         </div>
       )}
@@ -558,8 +599,17 @@ export default function MetricsPage() {
           </div>
 
           {/* CORE WEB VITALS */}
-          <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333", marginBottom: 18 }}>
-            <div style={{ fontWeight: 900, marginBottom: 12 }}>Core Web Vitals</div>
+          <div
+            style={{
+              padding: 20,
+              borderRadius: 16,
+              border: "1px solid #333",
+              marginBottom: 18,
+            }}
+          >
+            <div style={{ fontWeight: 900, marginBottom: 12 }}>
+              Core Web Vitals
+            </div>
 
             <div
               style={{
@@ -578,49 +628,76 @@ export default function MetricsPage() {
 
           {/* AI EXPLANATION */}
           {ai && (
-            <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333", marginBottom: 18 }}>
+            <div
+              style={{
+                padding: 20,
+                borderRadius: 16,
+                border: "1px solid #333",
+                marginBottom: 18,
+              }}
+            >
               <div style={{ fontWeight: 900, marginBottom: 10 }}>AI Summary</div>
-              <div style={{ color: "rgba(255,255,255,0.85)", lineHeight: 1.5, marginBottom: 14 }}>
+              <div
+                style={{
+                  color: "rgba(255,255,255,0.85)",
+                  lineHeight: 1.5,
+                  marginBottom: 14,
+                }}
+              >
                 {ai.summary}
               </div>
 
-              {Array.isArray(ai.metricsExplained) && ai.metricsExplained.length > 0 && (
-                <>
-                  <div style={{ fontWeight: 900, marginBottom: 10 }}>What these metrics mean</div>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {ai.metricsExplained.map((m: any, idx: number) => (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: 14,
-                          borderRadius: 14,
-                          border: "1px solid #2a2a2a",
-                          background: "rgba(255,255,255,0.02)",
-                        }}
-                      >
-                        <div style={{ fontWeight: 900, marginBottom: 6 }}>{m.name}</div>
-                        <div style={{ opacity: 0.9, marginBottom: 6 }}>
-                          <b>What:</b> {m.what}
+              {Array.isArray(ai.metricsExplained) &&
+                ai.metricsExplained.length > 0 && (
+                  <>
+                    <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                      What these metrics mean
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {ai.metricsExplained.map((m: any, idx: number) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: 14,
+                            borderRadius: 14,
+                            border: "1px solid #2a2a2a",
+                            background: "rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                            {m.name}
+                          </div>
+                          <div style={{ opacity: 0.9, marginBottom: 6 }}>
+                            <b>What:</b> {m.what}
+                          </div>
+                          <div style={{ opacity: 0.9, marginBottom: 8 }}>
+                            <b>Why it matters:</b> {m.whyItMatters}
+                          </div>
+                          {Array.isArray(m.howToImprove) &&
+                            m.howToImprove.length > 0 && (
+                              <ul
+                                style={{
+                                  margin: 0,
+                                  paddingLeft: 18,
+                                  opacity: 0.9,
+                                }}
+                              >
+                                {m.howToImprove.map((x: string, i: number) => (
+                                  <li key={i}>{x}</li>
+                                ))}
+                              </ul>
+                            )}
                         </div>
-                        <div style={{ opacity: 0.9, marginBottom: 8 }}>
-                          <b>Why it matters:</b> {m.whyItMatters}
-                        </div>
-                        {Array.isArray(m.howToImprove) && m.howToImprove.length > 0 && (
-                          <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
-                            {m.howToImprove.map((x: string, i: number) => (
-                              <li key={i}>{x}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+                      ))}
+                    </div>
+                  </>
+                )}
 
               {Array.isArray(ai.quickWins) && ai.quickWins.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Quick wins</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                    Quick wins
+                  </div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.quickWins.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -631,7 +708,9 @@ export default function MetricsPage() {
 
               {Array.isArray(ai.nextSteps) && ai.nextSteps.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Next steps</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                    Next steps
+                  </div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.nextSteps.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -646,7 +725,9 @@ export default function MetricsPage() {
           {lists && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18 }}>
               <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>Top opportunities (like PageSpeed)</div>
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                  Top opportunities (like PageSpeed)
+                </div>
                 {lists.opportunities.length === 0 ? (
                   <div style={{ opacity: 0.8 }}>No opportunities found.</div>
                 ) : (
@@ -696,7 +777,9 @@ export default function MetricsPage() {
                       >
                         <div style={{ fontWeight: 900 }}>{a.title}</div>
                         {a.displayValue && (
-                          <div style={{ opacity: 0.85, marginTop: 6 }}>{a.displayValue}</div>
+                          <div style={{ opacity: 0.85, marginTop: 6 }}>
+                            {a.displayValue}
+                          </div>
                         )}
                         {a.description && (
                           <div style={{ opacity: 0.85, marginTop: 6, lineHeight: 1.45 }}>
