@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+// ONLY this email should be master/admin
 const ADMIN_EMAIL = "sales@lustmia.com";
 
 /**
@@ -60,27 +61,107 @@ function nextUtcMidnightISO() {
 }
 
 /**
- * Read Supabase auth cookie user (id + email).
+ * If client doesn't send userId, fall back to Supabase auth cookie.
  */
-async function getAuthedUserFromCookie(): Promise<{
-  id: string | null;
-  email: string | null;
-}> {
+async function getUserIdFromCookie(): Promise<string | null> {
   try {
     const supabase = createSupabaseServer();
     const { data } = await supabase.auth.getUser();
-    return {
-      id: data.user?.id ?? null,
-      email: data.user?.email?.toLowerCase() ?? null,
-    };
+    return data.user?.id ?? null;
   } catch {
-    return { id: null, email: null };
+    return null;
   }
 }
 
-function isAdminEmail(email?: string | null) {
-  if (!email) return false;
-  return email.toLowerCase() === ADMIN_EMAIL;
+/** ---------- Fallback helpers (subdomain/cookie reliability) ---------- */
+
+function parseCookieHeader(cookieHeader: string | null) {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+
+  const parts = cookieHeader.split(";").map((p) => p.trim());
+  for (const p of parts) {
+    const idx = p.indexOf("=");
+    if (idx === -1) continue;
+    const k = p.slice(0, idx).trim();
+    const v = p.slice(idx + 1).trim();
+    out[k] = v;
+  }
+  return out;
+}
+
+function base64UrlDecodeToString(input: string) {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  return Buffer.from(b64 + pad, "base64").toString("utf8");
+}
+
+function tryDecodeJwtEmail(accessToken?: string | null) {
+  if (!accessToken) return null;
+  const parts = accessToken.split(".");
+  if (parts.length < 2) return null;
+
+  try {
+    const payloadJson = base64UrlDecodeToString(parts[1]);
+    const payload = JSON.parse(payloadJson);
+    const email =
+      (payload?.email as string | undefined) ||
+      (payload?.user_email as string | undefined) ||
+      null;
+    return email ? email.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryGetEmailFromSupabaseCookie(req: Request) {
+  const cookieHeader = req.headers.get("cookie");
+  const cookies = parseCookieHeader(cookieHeader);
+
+  const authCookieKey = Object.keys(cookies).find(
+    (k) => k.startsWith("sb-") && k.endsWith("-auth-token")
+  );
+
+  if (!authCookieKey) return null;
+
+  const raw = cookies[authCookieKey];
+  if (!raw) return null;
+
+  try {
+    const decoded = decodeURIComponent(raw);
+
+    try {
+      const parsed = JSON.parse(decoded);
+      const emailFromUser = parsed?.user?.email ?? null;
+      if (emailFromUser) return String(emailFromUser).toLowerCase();
+      const token = parsed?.access_token ?? null;
+      return tryDecodeJwtEmail(token);
+    } catch {
+      const asString = Buffer.from(decoded, "base64").toString("utf8");
+      const parsed = JSON.parse(asString);
+      const emailFromUser = parsed?.user?.email ?? null;
+      if (emailFromUser) return String(emailFromUser).toLowerCase();
+      const token = parsed?.access_token ?? null;
+      return tryDecodeJwtEmail(token);
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function getAuthedEmail(req: Request) {
+  // Primary: auth-helpers server client (cookie/session)
+  try {
+    const supabase = createSupabaseServer();
+    const { data } = await supabase.auth.getUser();
+    const email = data?.user?.email ?? null;
+    if (email) return email.toLowerCase();
+  } catch {
+    // ignore
+  }
+
+  // Fallback: read Supabase auth cookie directly
+  return tryGetEmailFromSupabaseCookie(req);
 }
 
 /**
@@ -99,7 +180,6 @@ async function reserveDailyToken(params: {
 
   let usedToday = 0;
 
-  // Read current usage
   const { data: usage } = await supabaseAdmin
     .from("proscan_usage")
     .select("used_today, reset_at")
@@ -115,7 +195,6 @@ async function reserveDailyToken(params: {
     }
   }
 
-  // Ensure row exists with correct resetAt/limit
   await supabaseAdmin.from("proscan_usage").upsert({
     user_id: userId,
     used_today: usedToday,
@@ -134,7 +213,6 @@ async function reserveDailyToken(params: {
     };
   }
 
-  // Reserve slot immediately
   await supabaseAdmin.from("proscan_usage").upsert({
     user_id: userId,
     used_today: usedToday + 1,
@@ -152,10 +230,6 @@ async function reserveDailyToken(params: {
   };
 }
 
-/**
- * Best-effort rollback if OpenAI fails (so we don't charge user for failed AI).
- * Not perfect under concurrency, but protects users.
- */
 async function rollbackDailyToken(params: {
   supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
   userId: string;
@@ -185,57 +259,54 @@ export async function POST(req: Request) {
     const strategy = body?.strategy;
     const psi = body?.psi;
 
+    const userIdFromBody = body?.userId;
+
     if (!psi) {
       return NextResponse.json({ error: "Missing psi payload" }, { status: 400 });
     }
 
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (!openaiKey) {
-      return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
+    let userId: string | null =
+      typeof userIdFromBody === "string" ? userIdFromBody : null;
+
+    if (!userId) {
+      userId = await getUserIdFromCookie();
     }
 
-    // Identify logged-in user by cookie (this is what we trust for admin bypass)
-    const authed = await getAuthedUserFromCookie();
-    const admin = isAdminEmail(authed.email);
-
-    // Determine userId (body may send anon id, but if logged in we prefer Supabase id)
-    const userIdFromBody = typeof body?.userId === "string" ? body.userId : null;
-    const userId =
-      authed.id ||
-      userIdFromBody ||
-      (admin ? `admin-${ADMIN_EMAIL}` : null);
-
-    // Non-admin must have some userId
-    if (!userId && !admin) {
+    if (!userId) {
       return NextResponse.json(
         { error: "Missing userId (or not authenticated)" },
         { status: 401 }
       );
     }
 
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      return NextResponse.json(
+        { error: "Missing OPENAI_API_KEY" },
+        { status: 500 }
+      );
+    }
+
     const supabaseAdmin = getSupabaseAdmin();
 
     // ---------------------------------------
-    // 1) Admin bypass: skip subscription + quota
+    // ADMIN BYPASS (server-side, real enforcement)
     // ---------------------------------------
-    let reservation:
-      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
-      | null = null;
+    const authedEmail = await getAuthedEmail(req);
+    const isAdmin = authedEmail === ADMIN_EMAIL;
 
-    let limit = 0;
+    // ---------------------------------------
+    // 1) Verify subscription is active + paid (skip for admin)
+    // ---------------------------------------
+    let plan = "free";
+    let status = "inactive";
 
-    if (!admin) {
-      // ---------------------------------------
-      // 1a) Verify subscription is active + paid
-      // ---------------------------------------
-      let plan = "free";
-      let status = "inactive";
-
+    if (!isAdmin) {
       try {
         const { data: sub } = await supabaseAdmin
           .from("proscan_subscriptions")
           .select("plan,status")
-          .eq("user_id", userId!)
+          .eq("user_id", userId)
           .maybeSingle();
 
         if (sub) {
@@ -243,7 +314,6 @@ export async function POST(req: Request) {
           status = sub.status || status;
         }
       } catch {
-        // fail closed
         plan = "free";
         status = "inactive";
       }
@@ -255,25 +325,36 @@ export async function POST(req: Request) {
           { status: 402 }
         );
       }
+    } else {
+      // admin treated as top tier
+      plan = "agency";
+      status = "active";
+    }
 
-      // ---------------------------------------
-      // 2) Reserve quota BEFORE OpenAI
-      // ---------------------------------------
-      limit = computePlanLimit(plan, status);
+    // ---------------------------------------
+    // 2) Reserve quota BEFORE OpenAI (skip for admin)
+    // ---------------------------------------
+    const limit = computePlanLimit(plan, status);
 
+    if (!isAdmin) {
       if (!Number.isFinite(limit) || limit <= 0) {
         return NextResponse.json(
-          { error: "AI quota is not available for your plan. Please contact support." },
+          {
+            error:
+              "AI quota is not available for your plan. Please contact support.",
+          },
           { status: 403 }
         );
       }
+    }
 
+    let reservation:
+      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
+      | null = null;
+
+    if (!isAdmin) {
       try {
-        reservation = await reserveDailyToken({
-          supabaseAdmin,
-          userId: userId!,
-          limit,
-        });
+        reservation = await reserveDailyToken({ supabaseAdmin, userId, limit });
       } catch {
         return NextResponse.json(
           { error: "Usage tracking unavailable. Please contact support." },
@@ -377,7 +458,13 @@ ${JSON.stringify(psi).slice(0, 180000)}
                 quickWins: { type: "array", items: { type: "string" } },
                 nextSteps: { type: "array", items: { type: "string" } },
               },
-              required: ["summary", "metricsExplained", "topIssues", "quickWins", "nextSteps"],
+              required: [
+                "summary",
+                "metricsExplained",
+                "topIssues",
+                "quickWins",
+                "nextSteps",
+              ],
             },
           },
         },
@@ -387,11 +474,10 @@ ${JSON.stringify(psi).slice(0, 180000)}
     const data = await r.json();
 
     if (!r.ok) {
-      // rollback reservation best-effort (non-admin only)
-      if (!admin && reservation && reservation.ok) {
+      if (!isAdmin && reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
-          userId: userId!,
+          userId,
           usedTodayBefore: reservation.usedTodayBefore,
           limit,
           resetAtISO: reservation.resetAt,
@@ -407,10 +493,10 @@ ${JSON.stringify(psi).slice(0, 180000)}
     const text = data?.output?.[0]?.content?.[0]?.text ?? data?.output_text ?? null;
 
     if (!text) {
-      if (!admin && reservation && reservation.ok) {
+      if (!isAdmin && reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
-          userId: userId!,
+          userId,
           usedTodayBefore: reservation.usedTodayBefore,
           limit,
           resetAtISO: reservation.resetAt,
@@ -424,10 +510,10 @@ ${JSON.stringify(psi).slice(0, 180000)}
     try {
       parsed = JSON.parse(text);
     } catch {
-      if (!admin && reservation && reservation.ok) {
+      if (!isAdmin && reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
-          userId: userId!,
+          userId,
           usedTodayBefore: reservation.usedTodayBefore,
           limit,
           resetAtISO: reservation.resetAt,
@@ -440,6 +526,7 @@ ${JSON.stringify(psi).slice(0, 180000)}
       );
     }
 
+    // Admin: do NOT decrement usage (we skipped reservation)
     return NextResponse.json(parsed);
   } catch (e: any) {
     return NextResponse.json(
