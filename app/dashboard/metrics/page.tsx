@@ -252,21 +252,26 @@ export default function MetricsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  /** NEW: prevent "Upgrade" flash while auth resolves */
+  /** prevent Upgrade flash while auth resolves */
   const [authLoading, setAuthLoading] = useState(true);
 
-  /** UPDATED: load + keep auth in sync (works for refresh + login/logout) */
+  /** load logged-in user once (safe, no crashing listeners) */
   useEffect(() => {
     let mounted = true;
 
-    const supabase = createClientComponentClient();
-
-    const syncUser = async () => {
+    (async () => {
       try {
-        const { data } = await supabase.auth.getUser();
-        const email = data?.user?.email ?? null;
+        const supabase = createClientComponentClient();
+        const { data, error } = await supabase.auth.getUser();
 
         if (!mounted) return;
+        if (error) {
+          setUserEmail(null);
+          setIsAdmin(false);
+          return;
+        }
+
+        const email = data?.user?.email ?? null;
         setUserEmail(email);
         setIsAdmin(isAdminEmail(email));
       } catch {
@@ -277,17 +282,10 @@ export default function MetricsPage() {
         if (!mounted) return;
         setAuthLoading(false);
       }
-    };
-
-    syncUser();
-
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
-      syncUser();
-    });
+    })();
 
     return () => {
       mounted = false;
-      sub?.subscription?.unsubscribe();
     };
   }, []);
 
@@ -326,7 +324,8 @@ export default function MetricsPage() {
 
       if (!resCompact.ok)
         throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resRaw.ok)
+        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -416,7 +415,9 @@ export default function MetricsPage() {
           ← Back to Dashboard
         </Link>
 
-        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
+        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>
+          Site Metrics
+        </h1>
       </div>
 
       {/* Quota strip */}
@@ -463,7 +464,7 @@ export default function MetricsPage() {
           )}
         </div>
 
-        {/* IMPORTANT: only show upgrade after auth is resolved */}
+        {/* Only show upgrade AFTER auth is resolved */}
         {!authLoading && aiLocked && (
           <Link
             href="/pricing"
@@ -484,7 +485,14 @@ export default function MetricsPage() {
       </div>
 
       {/* URL + Controls */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 20,
+        }}
+      >
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -608,7 +616,9 @@ export default function MetricsPage() {
               marginBottom: 18,
             }}
           >
-            <div style={{ fontWeight: 900, marginBottom: 12 }}>Core Web Vitals</div>
+            <div style={{ fontWeight: 900, marginBottom: 12 }}>
+              Core Web Vitals
+            </div>
 
             <div
               style={{
@@ -635,7 +645,9 @@ export default function MetricsPage() {
                 marginBottom: 18,
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>AI Summary</div>
+              <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                AI Summary
+              </div>
               <div
                 style={{
                   color: "rgba(255,255,255,0.85)",
@@ -646,51 +658,57 @@ export default function MetricsPage() {
                 {ai.summary}
               </div>
 
-              {Array.isArray(ai.metricsExplained) && ai.metricsExplained.length > 0 && (
-                <>
-                  <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                    What these metrics mean
-                  </div>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {ai.metricsExplained.map((m: any, idx: number) => (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: 14,
-                          borderRadius: 14,
-                          border: "1px solid #2a2a2a",
-                          background: "rgba(255,255,255,0.02)",
-                        }}
-                      >
-                        <div style={{ fontWeight: 900, marginBottom: 6 }}>{m.name}</div>
-                        <div style={{ opacity: 0.9, marginBottom: 6 }}>
-                          <b>What:</b> {m.what}
+              {Array.isArray(ai.metricsExplained) &&
+                ai.metricsExplained.length > 0 && (
+                  <>
+                    <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                      What these metrics mean
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {ai.metricsExplained.map((m: any, idx: number) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: 14,
+                            borderRadius: 14,
+                            border: "1px solid #2a2a2a",
+                            background: "rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                            {m.name}
+                          </div>
+                          <div style={{ opacity: 0.9, marginBottom: 6 }}>
+                            <b>What:</b> {m.what}
+                          </div>
+                          <div style={{ opacity: 0.9, marginBottom: 8 }}>
+                            <b>Why it matters:</b> {m.whyItMatters}
+                          </div>
+                          {Array.isArray(m.howToImprove) &&
+                            m.howToImprove.length > 0 && (
+                              <ul
+                                style={{
+                                  margin: 0,
+                                  paddingLeft: 18,
+                                  opacity: 0.9,
+                                }}
+                              >
+                                {m.howToImprove.map((x: string, i: number) => (
+                                  <li key={i}>{x}</li>
+                                ))}
+                              </ul>
+                            )}
                         </div>
-                        <div style={{ opacity: 0.9, marginBottom: 8 }}>
-                          <b>Why it matters:</b> {m.whyItMatters}
-                        </div>
-                        {Array.isArray(m.howToImprove) && m.howToImprove.length > 0 && (
-                          <ul
-                            style={{
-                              margin: 0,
-                              paddingLeft: 18,
-                              opacity: 0.9,
-                            }}
-                          >
-                            {m.howToImprove.map((x: string, i: number) => (
-                              <li key={i}>{x}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+                      ))}
+                    </div>
+                  </>
+                )}
 
               {Array.isArray(ai.quickWins) && ai.quickWins.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Quick wins</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                    Quick wins
+                  </div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.quickWins.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -701,7 +719,9 @@ export default function MetricsPage() {
 
               {Array.isArray(ai.nextSteps) && ai.nextSteps.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Next steps</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                    Next steps
+                  </div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.nextSteps.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -714,8 +734,20 @@ export default function MetricsPage() {
 
           {/* ISSUES / OPPORTUNITIES */}
           {lists && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18 }}>
-              <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr",
+                gap: 18,
+              }}
+            >
+              <div
+                style={{
+                  padding: 20,
+                  borderRadius: 16,
+                  border: "1px solid #333",
+                }}
+              >
                 <div style={{ fontWeight: 900, marginBottom: 10 }}>
                   Top opportunities (like PageSpeed)
                 </div>
@@ -762,8 +794,16 @@ export default function MetricsPage() {
                 )}
               </div>
 
-              <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>Failed audits</div>
+              <div
+                style={{
+                  padding: 20,
+                  borderRadius: 16,
+                  border: "1px solid #333",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                  Failed audits
+                </div>
                 {lists.failed.length === 0 ? (
                   <div style={{ opacity: 0.8 }}>No failed audits found.</div>
                 ) : (
