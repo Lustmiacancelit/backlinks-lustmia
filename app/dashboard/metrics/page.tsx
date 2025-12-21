@@ -211,7 +211,7 @@ function Spinner({ label }: { label: string }) {
   );
 }
 
-/** NEW: same userId helper used in dashboard (so quota aligns) */
+/** same userId helper used in dashboard (so quota aligns) */
 function getOrCreateUserId() {
   if (typeof window === "undefined") return "anon";
   const key = "lustmia_proscan_userid";
@@ -223,7 +223,7 @@ function getOrCreateUserId() {
   return id;
 }
 
-/** UPDATED: Admin check — single owner account */
+/** Admin check — single owner account */
 function isAdminEmail(email?: string | null) {
   if (!email) return false;
   return email.toLowerCase() === "sales@lustmia.com";
@@ -243,43 +243,55 @@ export default function MetricsPage() {
 
   const [error, setError] = useState<string | null>(null);
 
-  /** NEW: quota state */
+  /** quota state */
   const [quota, setQuota] = useState<any>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [userId, setUserId] = useState<string>("anon");
-  const [isAdmin, setIsAdmin] = useState(false);
 
-  /** UPDATED: admin state (based on logged-in Supabase email) */
+  /** admin state (based on logged-in Supabase email) */
+  const [isAdmin, setIsAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  /** UPDATED: load logged-in user once (for admin bypass) */
+  /** NEW: prevent "Upgrade" flash while auth resolves */
+  const [authLoading, setAuthLoading] = useState(true);
+
+  /** UPDATED: load + keep auth in sync (works for refresh + login/logout) */
   useEffect(() => {
     let mounted = true;
 
-    try {
-      const supabase = createClientComponentClient();
+    const supabase = createClientComponentClient();
 
-      supabase.auth
-        .getUser()
-        .then(({ data, error }) => {
-          if (!mounted) return;
-          if (error) return;
+    const syncUser = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const email = data?.user?.email ?? null;
 
-          const email = data?.user?.email ?? null;
-          setUserEmail(email);
-          setIsAdmin(isAdminEmail(email)); // <- admin bypass
-        })
-        .catch(() => {});
-    } catch {
-      // If Supabase client cannot be created (rare hydration issues), do nothing.
-    }
+        if (!mounted) return;
+        setUserEmail(email);
+        setIsAdmin(isAdminEmail(email));
+      } catch {
+        if (!mounted) return;
+        setUserEmail(null);
+        setIsAdmin(false);
+      } finally {
+        if (!mounted) return;
+        setAuthLoading(false);
+      }
+    };
+
+    syncUser();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      syncUser();
+    });
 
     return () => {
       mounted = false;
+      sub?.subscription?.unsubscribe();
     };
   }, []);
 
-  /** NEW: load quota once */
+  /** load quota once */
   useEffect(() => {
     const id = getOrCreateUserId();
     setUserId(id);
@@ -314,8 +326,7 @@ export default function MetricsPage() {
 
       if (!resCompact.ok)
         throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok)
-        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -329,8 +340,7 @@ export default function MetricsPage() {
   async function generateAi() {
     if (!psiRaw) return;
 
-    // NEW: client-side lock (server-side will still enforce in step #2)
-    // Admin bypasses this lock.
+    // client-side lock (server-side should ALSO bypass for admin)
     if (!isAdmin && (!isPro || remaining <= 0)) {
       setError("Upgrade required to unlock AI recommendations.");
       return;
@@ -371,7 +381,7 @@ export default function MetricsPage() {
     ? "Generating AI recommendations…"
     : "Analyzing site performance…";
 
-  // UPDATED: Admin bypass AI lock in UI
+  // Admin bypass AI lock in UI
   const aiLocked = !isAdmin && (!isPro || remaining <= 0);
 
   return (
@@ -406,12 +416,10 @@ export default function MetricsPage() {
           ← Back to Dashboard
         </Link>
 
-        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>
-          Site Metrics
-        </h1>
+        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
       </div>
 
-      {/* NEW: Quota strip */}
+      {/* Quota strip */}
       <div
         style={{
           display: "flex",
@@ -455,7 +463,8 @@ export default function MetricsPage() {
           )}
         </div>
 
-        {aiLocked && (
+        {/* IMPORTANT: only show upgrade after auth is resolved */}
+        {!authLoading && aiLocked && (
           <Link
             href="/pricing"
             style={{
@@ -599,9 +608,7 @@ export default function MetricsPage() {
               marginBottom: 18,
             }}
           >
-            <div style={{ fontWeight: 900, marginBottom: 12 }}>
-              Core Web Vitals
-            </div>
+            <div style={{ fontWeight: 900, marginBottom: 12 }}>Core Web Vitals</div>
 
             <div
               style={{
@@ -639,57 +646,51 @@ export default function MetricsPage() {
                 {ai.summary}
               </div>
 
-              {Array.isArray(ai.metricsExplained) &&
-                ai.metricsExplained.length > 0 && (
-                  <>
-                    <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                      What these metrics mean
-                    </div>
-                    <div style={{ display: "grid", gap: 12 }}>
-                      {ai.metricsExplained.map((m: any, idx: number) => (
-                        <div
-                          key={idx}
-                          style={{
-                            padding: 14,
-                            borderRadius: 14,
-                            border: "1px solid #2a2a2a",
-                            background: "rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <div style={{ fontWeight: 900, marginBottom: 6 }}>
-                            {m.name}
-                          </div>
-                          <div style={{ opacity: 0.9, marginBottom: 6 }}>
-                            <b>What:</b> {m.what}
-                          </div>
-                          <div style={{ opacity: 0.9, marginBottom: 8 }}>
-                            <b>Why it matters:</b> {m.whyItMatters}
-                          </div>
-                          {Array.isArray(m.howToImprove) &&
-                            m.howToImprove.length > 0 && (
-                              <ul
-                                style={{
-                                  margin: 0,
-                                  paddingLeft: 18,
-                                  opacity: 0.9,
-                                }}
-                              >
-                                {m.howToImprove.map((x: string, i: number) => (
-                                  <li key={i}>{x}</li>
-                                ))}
-                              </ul>
-                            )}
+              {Array.isArray(ai.metricsExplained) && ai.metricsExplained.length > 0 && (
+                <>
+                  <div style={{ fontWeight: 900, marginBottom: 10 }}>
+                    What these metrics mean
+                  </div>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {ai.metricsExplained.map((m: any, idx: number) => (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: 14,
+                          borderRadius: 14,
+                          border: "1px solid #2a2a2a",
+                          background: "rgba(255,255,255,0.02)",
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, marginBottom: 6 }}>{m.name}</div>
+                        <div style={{ opacity: 0.9, marginBottom: 6 }}>
+                          <b>What:</b> {m.what}
                         </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                        <div style={{ opacity: 0.9, marginBottom: 8 }}>
+                          <b>Why it matters:</b> {m.whyItMatters}
+                        </div>
+                        {Array.isArray(m.howToImprove) && m.howToImprove.length > 0 && (
+                          <ul
+                            style={{
+                              margin: 0,
+                              paddingLeft: 18,
+                              opacity: 0.9,
+                            }}
+                          >
+                            {m.howToImprove.map((x: string, i: number) => (
+                              <li key={i}>{x}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
 
               {Array.isArray(ai.quickWins) && ai.quickWins.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Quick wins
-                  </div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Quick wins</div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.quickWins.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -700,9 +701,7 @@ export default function MetricsPage() {
 
               {Array.isArray(ai.nextSteps) && ai.nextSteps.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Next steps
-                  </div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Next steps</div>
                   <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
                     {ai.nextSteps.map((x: string, i: number) => (
                       <li key={i}>{x}</li>
@@ -734,14 +733,26 @@ export default function MetricsPage() {
                           background: "rgba(255,255,255,0.02)",
                         }}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                          }}
+                        >
                           <div style={{ fontWeight: 900 }}>{o.title}</div>
                           <div style={{ opacity: 0.85, whiteSpace: "nowrap" }}>
                             {o.impact || o.displayValue || ""}
                           </div>
                         </div>
                         {o.description && (
-                          <div style={{ opacity: 0.85, marginTop: 6, lineHeight: 1.45 }}>
+                          <div
+                            style={{
+                              opacity: 0.85,
+                              marginTop: 6,
+                              lineHeight: 1.45,
+                            }}
+                          >
                             {o.description}
                           </div>
                         )}
@@ -774,7 +785,13 @@ export default function MetricsPage() {
                           </div>
                         )}
                         {a.description && (
-                          <div style={{ opacity: 0.85, marginTop: 6, lineHeight: 1.45 }}>
+                          <div
+                            style={{
+                              opacity: 0.85,
+                              marginTop: 6,
+                              lineHeight: 1.45,
+                            }}
+                          >
                             {a.description}
                           </div>
                         )}
