@@ -253,6 +253,7 @@ export default function MetricsPage() {
   const [quota, setQuota] = useState<any>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
   const [userId, setUserId] = useState<string>("anon");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   /** NEW: superuser state (based on logged-in Supabase email) */
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -268,6 +269,7 @@ export default function MetricsPage() {
         if (error) return;
         const email = data?.user?.email ?? null;
         setUserEmail(email);
+        setIsAdmin(isEmailSuperUser(email)); // <- superuser => admin bypass
       })
       .catch(() => {});
   }, []);
@@ -322,8 +324,8 @@ export default function MetricsPage() {
     if (!psiRaw) return;
 
     // NEW: client-side lock (server-side will still enforce in step #2)
-    // Superusers bypass this lock.
-    if (!isSuperUser && (!isPro || remaining <= 0)) {
+    // Superusers/admin bypass this lock.
+    if (!isAdmin && (!isPro || remaining <= 0)) {
       setError("Upgrade required to unlock AI recommendations.");
       return;
     }
@@ -360,8 +362,8 @@ export default function MetricsPage() {
     ? "Generating AI recommendations…"
     : "Analyzing site performance…";
 
-  // Superusers bypass AI lock in UI
-  const aiLocked = (!isPro || remaining <= 0) && !isSuperUser;
+  // Superusers/admin bypass AI lock in UI
+  const aiLocked = (!isPro || remaining <= 0) && !isAdmin;
 
   return (
     <div style={{ padding: 28 }}>
@@ -412,7 +414,7 @@ export default function MetricsPage() {
             fontWeight: 700,
           }}
         >
-          {quotaLoading ? "Checking plan…" : `Plan: ${planName.toUpperCase()}`}
+          {quotaLoading ? "Checking plan…" : `Plan: ${(isAdmin ? "ADMIN" : planName.toUpperCase())}`}
         </div>
 
         <div
@@ -424,7 +426,7 @@ export default function MetricsPage() {
             fontSize: 12,
           }}
         >
-          {quotaLoading ? "…" : <>Pro scans left today: <b>{remaining}</b></>}
+          {quotaLoading ? "…" : <>Pro scans left today: <b>{isAdmin ? "∞" : remaining}</b></>}
         </div>
 
         {aiLocked && (
