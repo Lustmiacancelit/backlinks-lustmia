@@ -4,13 +4,8 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-// ONLY this email should be master/admin
 const ADMIN_EMAIL = "sales@lustmia.com";
 
-/**
- * Keep admin client local to this route (uses service role)
- * so we can read subscriptions + update quota safely.
- */
 function getSupabaseAdmin() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -31,14 +26,6 @@ function getSupabaseAdmin() {
   });
 }
 
-/**
- * Plan → daily limits.
- * Defaults can be overridden via env vars:
- *  - PROSCAN_LIMIT_FREE
- *  - PROSCAN_LIMIT_PERSONAL
- *  - PROSCAN_LIMIT_BUSINESS
- *  - PROSCAN_LIMIT_AGENCY
- */
 const PLAN_LIMITS: Record<string, number> = {
   free: Number(process.env.PROSCAN_LIMIT_FREE ?? 0),
   personal: Number(process.env.PROSCAN_LIMIT_PERSONAL ?? 3),
@@ -60,9 +47,18 @@ function nextUtcMidnightISO() {
   return resetAt.toISOString();
 }
 
-/**
- * If client doesn't send userId, fall back to Supabase auth cookie.
- */
+/** Admin email from cookie/session (server-side) */
+async function getAuthedEmail(): Promise<string | null> {
+  try {
+    const supabase = createSupabaseServer();
+    const { data } = await supabase.auth.getUser();
+    return data?.user?.email?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** If client doesn't send userId, fall back to Supabase auth cookie. */
 async function getUserIdFromCookie(): Promise<string | null> {
   try {
     const supabase = createSupabaseServer();
@@ -73,101 +69,6 @@ async function getUserIdFromCookie(): Promise<string | null> {
   }
 }
 
-/** ---------- Fallback helpers (subdomain/cookie reliability) ---------- */
-
-function parseCookieHeader(cookieHeader: string | null) {
-  const out: Record<string, string> = {};
-  if (!cookieHeader) return out;
-
-  const parts = cookieHeader.split(";").map((p) => p.trim());
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx === -1) continue;
-    const k = p.slice(0, idx).trim();
-    const v = p.slice(idx + 1).trim();
-    out[k] = v;
-  }
-  return out;
-}
-
-function base64UrlDecodeToString(input: string) {
-  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
-  return Buffer.from(b64 + pad, "base64").toString("utf8");
-}
-
-function tryDecodeJwtEmail(accessToken?: string | null) {
-  if (!accessToken) return null;
-  const parts = accessToken.split(".");
-  if (parts.length < 2) return null;
-
-  try {
-    const payloadJson = base64UrlDecodeToString(parts[1]);
-    const payload = JSON.parse(payloadJson);
-    const email =
-      (payload?.email as string | undefined) ||
-      (payload?.user_email as string | undefined) ||
-      null;
-    return email ? email.toLowerCase() : null;
-  } catch {
-    return null;
-  }
-}
-
-function tryGetEmailFromSupabaseCookie(req: Request) {
-  const cookieHeader = req.headers.get("cookie");
-  const cookies = parseCookieHeader(cookieHeader);
-
-  const authCookieKey = Object.keys(cookies).find(
-    (k) => k.startsWith("sb-") && k.endsWith("-auth-token")
-  );
-
-  if (!authCookieKey) return null;
-
-  const raw = cookies[authCookieKey];
-  if (!raw) return null;
-
-  try {
-    const decoded = decodeURIComponent(raw);
-
-    try {
-      const parsed = JSON.parse(decoded);
-      const emailFromUser = parsed?.user?.email ?? null;
-      if (emailFromUser) return String(emailFromUser).toLowerCase();
-      const token = parsed?.access_token ?? null;
-      return tryDecodeJwtEmail(token);
-    } catch {
-      const asString = Buffer.from(decoded, "base64").toString("utf8");
-      const parsed = JSON.parse(asString);
-      const emailFromUser = parsed?.user?.email ?? null;
-      if (emailFromUser) return String(emailFromUser).toLowerCase();
-      const token = parsed?.access_token ?? null;
-      return tryDecodeJwtEmail(token);
-    }
-  } catch {
-    return null;
-  }
-}
-
-async function getAuthedEmail(req: Request) {
-  // Primary: auth-helpers server client (cookie/session)
-  try {
-    const supabase = createSupabaseServer();
-    const { data } = await supabase.auth.getUser();
-    const email = data?.user?.email ?? null;
-    if (email) return email.toLowerCase();
-  } catch {
-    // ignore
-  }
-
-  // Fallback: read Supabase auth cookie directly
-  return tryGetEmailFromSupabaseCookie(req);
-}
-
-/**
- * Reserve 1 daily token (atomic enough via upsert pattern).
- * We reserve BEFORE OpenAI to avoid cost blowups.
- */
 async function reserveDailyToken(params: {
   supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
   userId: string;
@@ -247,7 +148,7 @@ async function rollbackDailyToken(params: {
       reset_at: resetAtISO,
     });
   } catch {
-    // ignore rollback failure
+    // ignore
   }
 }
 
@@ -281,22 +182,19 @@ export async function POST(req: Request) {
 
     const openaiKey = process.env.OPENAI_API_KEY;
     if (!openaiKey) {
-      return NextResponse.json(
-        { error: "Missing OPENAI_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
     }
 
     const supabaseAdmin = getSupabaseAdmin();
 
     // ---------------------------------------
-    // ADMIN BYPASS (server-side, real enforcement)
+    // ADMIN BYPASS (sales@lustmia.com)
     // ---------------------------------------
-    const authedEmail = await getAuthedEmail(req);
+    const authedEmail = await getAuthedEmail();
     const isAdmin = authedEmail === ADMIN_EMAIL;
 
     // ---------------------------------------
-    // 1) Verify subscription is active + paid (skip for admin)
+    // 1) Verify subscription (skip for admin)
     // ---------------------------------------
     let plan = "free";
     let status = "inactive";
@@ -326,7 +224,7 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      // admin treated as top tier
+      // force for admin
       plan = "agency";
       status = "active";
     }
@@ -335,6 +233,10 @@ export async function POST(req: Request) {
     // 2) Reserve quota BEFORE OpenAI (skip for admin)
     // ---------------------------------------
     const limit = computePlanLimit(plan, status);
+
+    let reservation:
+      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
+      | null = null;
 
     if (!isAdmin) {
       if (!Number.isFinite(limit) || limit <= 0) {
@@ -346,13 +248,7 @@ export async function POST(req: Request) {
           { status: 403 }
         );
       }
-    }
 
-    let reservation:
-      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
-      | null = null;
-
-    if (!isAdmin) {
       try {
         reservation = await reserveDailyToken({ supabaseAdmin, userId, limit });
       } catch {
@@ -458,13 +354,7 @@ ${JSON.stringify(psi).slice(0, 180000)}
                 quickWins: { type: "array", items: { type: "string" } },
                 nextSteps: { type: "array", items: { type: "string" } },
               },
-              required: [
-                "summary",
-                "metricsExplained",
-                "topIssues",
-                "quickWins",
-                "nextSteps",
-              ],
+              required: ["summary", "metricsExplained", "topIssues", "quickWins", "nextSteps"],
             },
           },
         },
@@ -490,7 +380,10 @@ ${JSON.stringify(psi).slice(0, 180000)}
       );
     }
 
-    const text = data?.output?.[0]?.content?.[0]?.text ?? data?.output_text ?? null;
+    const text =
+      data?.output?.[0]?.content?.[0]?.text ??
+      data?.output_text ??
+      null;
 
     if (!text) {
       if (!isAdmin && reservation && reservation.ok) {
@@ -502,7 +395,6 @@ ${JSON.stringify(psi).slice(0, 180000)}
           resetAtISO: reservation.resetAt,
         });
       }
-
       return NextResponse.json({ error: "No AI output" }, { status: 500 });
     }
 
@@ -519,14 +411,12 @@ ${JSON.stringify(psi).slice(0, 180000)}
           resetAtISO: reservation.resetAt,
         });
       }
-
       return NextResponse.json(
         { error: "AI did not return valid JSON", raw: text },
         { status: 500 }
       );
     }
 
-    // Admin: do NOT decrement usage (we skipped reservation)
     return NextResponse.json(parsed);
   } catch (e: any) {
     return NextResponse.json(
