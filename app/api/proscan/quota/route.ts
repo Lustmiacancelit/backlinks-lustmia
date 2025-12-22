@@ -160,8 +160,8 @@ export async function GET(req: Request) {
       authedUserId = null;
     }
 
-    // Fallback: read Supabase auth cookie directly and extract email
-    // (NOTE: we cannot reliably extract userId from this fallback)
+    // Fallback: try to extract email from cookie if auth.getUser failed
+    // (cannot reliably extract userId from this fallback)
     if (!authedEmail) {
       authedEmail = tryGetEmailFromSupabaseCookie(req);
     }
@@ -169,7 +169,7 @@ export async function GET(req: Request) {
     const isAdmin = authedEmail === ADMIN_EMAIL;
 
     // IMPORTANT:
-    // - If user is authenticated, ALWAYS use authedUserId (ignore spoofable ?u=)
+    // - If authenticated, ALWAYS use authedUserId (ignore spoofable ?u=)
     // - If not authenticated, fall back to ?u= or demo id
     const userIdParam = searchParams.get("u");
     const userId = isAdmin
