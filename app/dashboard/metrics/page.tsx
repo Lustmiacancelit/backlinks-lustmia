@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createBrowserClient } from "@supabase/ssr";
 
 type Strategy = "desktop" | "mobile";
 
@@ -128,14 +128,11 @@ function extractPsiLists(psi: any) {
           ? `${formatBytes(bytes)}`
           : null;
 
-      return {
-        ...a,
-        impact,
-      };
+      return { ...a, impact };
     })
     .sort(
       (a, b) =>
-        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
+        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0),
     )
     .slice(0, 10);
 
@@ -144,7 +141,7 @@ function extractPsiLists(psi: any) {
       (a) =>
         a.scoreDisplayMode === "numeric" &&
         typeof a.score === "number" &&
-        a.score < 0.9
+        a.score < 0.9,
     )
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1))
     .slice(0, 12);
@@ -250,33 +247,39 @@ export default function MetricsPage() {
 
   /** admin state (based on logged-in Supabase email) */
   const [isAdmin, setIsAdmin] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   /** prevent Upgrade flash while auth resolves */
   const [authLoading, setAuthLoading] = useState(true);
 
-  /** load logged-in user once (safe, no crashing listeners) */
+  /** load logged-in user once (safe) */
   useEffect(() => {
     let mounted = true;
 
     (async () => {
       try {
-        const supabase = createClientComponentClient();
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+        if (!supabaseUrl || !supabaseAnonKey) {
+          if (!mounted) return;
+          setIsAdmin(false);
+          return;
+        }
+
+        const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
         const { data, error } = await supabase.auth.getUser();
 
         if (!mounted) return;
+
         if (error) {
-          setUserEmail(null);
           setIsAdmin(false);
           return;
         }
 
         const email = data?.user?.email ?? null;
-        setUserEmail(email);
         setIsAdmin(isAdminEmail(email));
       } catch {
         if (!mounted) return;
-        setUserEmail(null);
         setIsAdmin(false);
       } finally {
         if (!mounted) return;
@@ -324,8 +327,7 @@ export default function MetricsPage() {
 
       if (!resCompact.ok)
         throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok)
-        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -370,10 +372,7 @@ export default function MetricsPage() {
   }
 
   const scores = data?.scores;
-  const lists = useMemo(
-    () => (psiRaw ? extractPsiLists(psiRaw) : null),
-    [psiRaw]
-  );
+  const lists = useMemo(() => (psiRaw ? extractPsiLists(psiRaw) : null), [psiRaw]);
 
   const showOverlay = loading || aiLoading;
   const overlayLabel = aiLoading
@@ -387,7 +386,6 @@ export default function MetricsPage() {
     <div style={{ padding: 28 }}>
       {showOverlay && <Spinner label={overlayLabel} />}
 
-      {/* Header row: back button + title */}
       <div
         style={{
           display: "flex",
@@ -415,12 +413,9 @@ export default function MetricsPage() {
           ← Back to Dashboard
         </Link>
 
-        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>
-          Site Metrics
-        </h1>
+        <h1 style={{ fontSize: 30, fontWeight: 900, margin: 0 }}>Site Metrics</h1>
       </div>
 
-      {/* Quota strip */}
       <div
         style={{
           display: "flex",
@@ -441,9 +436,7 @@ export default function MetricsPage() {
             fontWeight: 700,
           }}
         >
-          {quotaLoading
-            ? "Checking plan…"
-            : `Plan: ${isAdmin ? "ADMIN" : planName.toUpperCase()}`}
+          {quotaLoading ? "Checking plan…" : `Plan: ${isAdmin ? "ADMIN" : planName.toUpperCase()}`}
         </div>
 
         <div
@@ -464,7 +457,6 @@ export default function MetricsPage() {
           )}
         </div>
 
-        {/* Only show upgrade AFTER auth is resolved */}
         {!authLoading && aiLocked && (
           <Link
             href="/pricing"
@@ -484,7 +476,6 @@ export default function MetricsPage() {
         )}
       </div>
 
-      {/* URL + Controls */}
       <div
         style={{
           display: "flex",
@@ -581,7 +572,6 @@ export default function MetricsPage() {
 
       {scores && (
         <>
-          {/* SCORE PIES */}
           <div
             style={{
               display: "grid",
@@ -607,7 +597,6 @@ export default function MetricsPage() {
             </MetricCard>
           </div>
 
-          {/* CORE WEB VITALS */}
           <div
             style={{
               padding: 20,
@@ -616,9 +605,7 @@ export default function MetricsPage() {
               marginBottom: 18,
             }}
           >
-            <div style={{ fontWeight: 900, marginBottom: 12 }}>
-              Core Web Vitals
-            </div>
+            <div style={{ fontWeight: 900, marginBottom: 12 }}>Core Web Vitals</div>
 
             <div
               style={{
@@ -627,15 +614,14 @@ export default function MetricsPage() {
                 gap: 12,
               }}
             >
-              <div>FCP: {data.metrics?.fcp ?? "—"}</div>
-              <div>LCP: {data.metrics?.lcp ?? "—"}</div>
-              <div>CLS: {data.metrics?.cls ?? "—"}</div>
-              <div>TBT: {data.metrics?.tbt ?? "—"}</div>
-              <div>Speed Index: {data.metrics?.si ?? "—"}</div>
+              <div>FCP: {data?.metrics?.fcp ?? "—"}</div>
+              <div>LCP: {data?.metrics?.lcp ?? "—"}</div>
+              <div>CLS: {data?.metrics?.cls ?? "—"}</div>
+              <div>TBT: {data?.metrics?.tbt ?? "—"}</div>
+              <div>Speed Index: {data?.metrics?.si ?? "—"}</div>
             </div>
           </div>
 
-          {/* AI EXPLANATION */}
           {ai && (
             <div
               style={{
@@ -645,9 +631,7 @@ export default function MetricsPage() {
                 marginBottom: 18,
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                AI Summary
-              </div>
+              <div style={{ fontWeight: 900, marginBottom: 10 }}>AI Summary</div>
               <div
                 style={{
                   color: "rgba(255,255,255,0.85)",
@@ -657,97 +641,12 @@ export default function MetricsPage() {
               >
                 {ai.summary}
               </div>
-
-              {Array.isArray(ai.metricsExplained) &&
-                ai.metricsExplained.length > 0 && (
-                  <>
-                    <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                      What these metrics mean
-                    </div>
-                    <div style={{ display: "grid", gap: 12 }}>
-                      {ai.metricsExplained.map((m: any, idx: number) => (
-                        <div
-                          key={idx}
-                          style={{
-                            padding: 14,
-                            borderRadius: 14,
-                            border: "1px solid #2a2a2a",
-                            background: "rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <div style={{ fontWeight: 900, marginBottom: 6 }}>
-                            {m.name}
-                          </div>
-                          <div style={{ opacity: 0.9, marginBottom: 6 }}>
-                            <b>What:</b> {m.what}
-                          </div>
-                          <div style={{ opacity: 0.9, marginBottom: 8 }}>
-                            <b>Why it matters:</b> {m.whyItMatters}
-                          </div>
-                          {Array.isArray(m.howToImprove) &&
-                            m.howToImprove.length > 0 && (
-                              <ul
-                                style={{
-                                  margin: 0,
-                                  paddingLeft: 18,
-                                  opacity: 0.9,
-                                }}
-                              >
-                                {m.howToImprove.map((x: string, i: number) => (
-                                  <li key={i}>{x}</li>
-                                ))}
-                              </ul>
-                            )}
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-              {Array.isArray(ai.quickWins) && ai.quickWins.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Quick wins
-                  </div>
-                  <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
-                    {ai.quickWins.map((x: string, i: number) => (
-                      <li key={i}>{x}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {Array.isArray(ai.nextSteps) && ai.nextSteps.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Next steps
-                  </div>
-                  <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.9 }}>
-                    {ai.nextSteps.map((x: string, i: number) => (
-                      <li key={i}>{x}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
             </div>
           )}
 
-          {/* ISSUES / OPPORTUNITIES */}
           {lists && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr",
-                gap: 18,
-              }}
-            >
-              <div
-                style={{
-                  padding: 20,
-                  borderRadius: 16,
-                  border: "1px solid #333",
-                }}
-              >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18 }}>
+              <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
                 <div style={{ fontWeight: 900, marginBottom: 10 }}>
                   Top opportunities (like PageSpeed)
                 </div>
@@ -778,13 +677,7 @@ export default function MetricsPage() {
                           </div>
                         </div>
                         {o.description && (
-                          <div
-                            style={{
-                              opacity: 0.85,
-                              marginTop: 6,
-                              lineHeight: 1.45,
-                            }}
-                          >
+                          <div style={{ opacity: 0.85, marginTop: 6, lineHeight: 1.45 }}>
                             {o.description}
                           </div>
                         )}
@@ -794,16 +687,8 @@ export default function MetricsPage() {
                 )}
               </div>
 
-              <div
-                style={{
-                  padding: 20,
-                  borderRadius: 16,
-                  border: "1px solid #333",
-                }}
-              >
-                <div style={{ fontWeight: 900, marginBottom: 10 }}>
-                  Failed audits
-                </div>
+              <div style={{ padding: 20, borderRadius: 16, border: "1px solid #333" }}>
+                <div style={{ fontWeight: 900, marginBottom: 10 }}>Failed audits</div>
                 {lists.failed.length === 0 ? (
                   <div style={{ opacity: 0.8 }}>No failed audits found.</div>
                 ) : (
@@ -820,18 +705,10 @@ export default function MetricsPage() {
                       >
                         <div style={{ fontWeight: 900 }}>{a.title}</div>
                         {a.displayValue && (
-                          <div style={{ opacity: 0.85, marginTop: 6 }}>
-                            {a.displayValue}
-                          </div>
+                          <div style={{ opacity: 0.85, marginTop: 6 }}>{a.displayValue}</div>
                         )}
                         {a.description && (
-                          <div
-                            style={{
-                              opacity: 0.85,
-                              marginTop: 6,
-                              lineHeight: 1.45,
-                            }}
-                          >
+                          <div style={{ opacity: 0.85, marginTop: 6, lineHeight: 1.45 }}>
                             {a.description}
                           </div>
                         )}

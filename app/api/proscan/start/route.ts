@@ -13,7 +13,7 @@ import {
 
 type ScanRequest = {
   url: string;
-  userId: string;
+  userId?: string; // ignored for security; kept for compatibility
 };
 
 // ONLY this email should be master/admin
@@ -136,38 +136,27 @@ export async function POST(req: Request) {
     }
 
     // -----------------------------
-    // AUTH (required for admin bypass)
+    // AUTH: cookie is source of truth
     // -----------------------------
-    let authedEmail: string | null = null;
-    try {
-      const supabaseAuth = createSupabaseServer();
-      const { data } = await supabaseAuth.auth.getUser();
-      authedEmail = data?.user?.email?.toLowerCase() ?? null;
-    } catch {
-      authedEmail = null;
+    const supabaseAuth = createSupabaseServer();
+    const { data: authData } = await supabaseAuth.auth.getUser();
+    const authedUser = authData?.user ?? null;
+
+    if (!authedUser) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
+    const authedEmail = (authedUser.email ?? "").toLowerCase();
     const isAdmin = authedEmail === ADMIN_EMAIL;
-
-    // For normal users, we still require userId from the client
-    if (!isAdmin && !body?.userId) {
-      return NextResponse.json(
-        { error: "Missing userId" },
-        { status: 400 }
-      );
-    }
+    const userId = authedUser.id;
 
     // Keep your existing admin client (not removing it)
     const supabaseAdmin = getSupabaseAdmin();
 
-    // ✅ Shared helper admin client too (same envs, safe)
+    // ✅ Shared helper admin client too
     const supabaseAdminLib = getSupabaseAdminFromLib();
 
     const target = normalizeUrl(body.url);
-
-    // Use incoming userId for normal users
-    // For admin, tie scans to a stable id (doesn't matter for quota because we skip it)
-    const userId = isAdmin ? `admin-${ADMIN_EMAIL}` : body.userId;
 
     // -----------------------------
     // ADMIN SHORT-CIRCUIT:
@@ -216,10 +205,7 @@ export async function POST(req: Request) {
 
     try {
       // 1) subscription
-      const { plan, status } = await getUserSubscription(
-        supabaseAdminLib,
-        userId
-      );
+      const { plan, status } = await getUserSubscription(supabaseAdminLib, userId);
 
       // 2) only paid active can run ProScan
       const isPaidActive = status === "active" && plan !== "free";

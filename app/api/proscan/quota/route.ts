@@ -98,6 +98,10 @@ function tryDecodeJwtEmail(accessToken?: string | null) {
   }
 }
 
+/**
+ * Attempts to read the Supabase auth cookie created by auth-helpers:
+ * often named like: sb-<project-ref>-auth-token
+ */
 function tryGetEmailFromSupabaseCookie(req: Request) {
   const cookieHeader = req.headers.get("cookie");
   const cookies = parseCookieHeader(cookieHeader);
@@ -114,6 +118,7 @@ function tryGetEmailFromSupabaseCookie(req: Request) {
   try {
     const decoded = decodeURIComponent(raw);
 
+    // Try JSON parse first.
     try {
       const parsed = JSON.parse(decoded);
       const emailFromUser = parsed?.user?.email ?? null;
@@ -121,6 +126,7 @@ function tryGetEmailFromSupabaseCookie(req: Request) {
       const token = parsed?.access_token ?? null;
       return tryDecodeJwtEmail(token);
     } catch {
+      // Try base64 decode -> JSON
       const asString = Buffer.from(decoded, "base64").toString("utf8");
       const parsed = JSON.parse(asString);
       const emailFromUser = parsed?.user?.email ?? null;
@@ -139,30 +145,41 @@ export async function GET(req: Request) {
     const supabaseAuth = createSupabaseServer();
     const { searchParams } = new URL(req.url);
 
-    // 0) Identify logged-in user email
+    // -----------------------------
+    // 0) Identify logged-in user (cookie auth is source of truth)
+    // -----------------------------
     let authedEmail: string | null = null;
+    let authedUserId: string | null = null;
 
-    // Primary: auth-helpers server client (cookie/session)
     try {
       const { data } = await supabaseAuth.auth.getUser();
       authedEmail = data?.user?.email?.toLowerCase() ?? null;
+      authedUserId = data?.user?.id ?? null;
     } catch {
       authedEmail = null;
+      authedUserId = null;
     }
 
     // Fallback: read Supabase auth cookie directly and extract email
+    // (NOTE: we cannot reliably extract userId from this fallback)
     if (!authedEmail) {
       authedEmail = tryGetEmailFromSupabaseCookie(req);
     }
 
-    const isAdminTester = authedEmail === ADMIN_EMAIL;
+    const isAdmin = authedEmail === ADMIN_EMAIL;
 
+    // IMPORTANT:
+    // - If user is authenticated, ALWAYS use authedUserId (ignore spoofable ?u=)
+    // - If not authenticated, fall back to ?u= or demo id
     const userIdParam = searchParams.get("u");
-    const userId =
-      userIdParam || (isAdminTester ? "admin-sales@lustmia.com" : DEMO_USER_ID);
+    const userId = isAdmin
+      ? `admin-${ADMIN_EMAIL}` // stable admin id (quota irrelevant)
+      : authedUserId || userIdParam || DEMO_USER_ID;
 
+    // -----------------------------
     // ADMIN SHORT-CIRCUIT
-    if (isAdminTester) {
+    // -----------------------------
+    if (isAdmin) {
       return NextResponse.json({
         userId,
         email: authedEmail,
@@ -178,7 +195,9 @@ export async function GET(req: Request) {
       });
     }
 
+    // -----------------------------
     // Normal users
+    // -----------------------------
     let usedToday = 0;
     let plan = "free";
     let status = "inactive";
@@ -197,7 +216,7 @@ export async function GET(req: Request) {
         status = sub.status || status;
       }
     } catch {
-      // ignore
+      // ignore missing table / schema mismatch
     }
 
     const limit = computePlanLimit(plan, status);
@@ -216,6 +235,7 @@ export async function GET(req: Request) {
 
       if (usage) {
         const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
+
         if (resetAtDb && resetAtDb > now) {
           usedToday = usage.used_today || 0;
         } else {
@@ -230,7 +250,7 @@ export async function GET(req: Request) {
         reset_at: resetAtISO,
       });
     } catch {
-      // ignore
+      // ignore missing usage table
     }
 
     const remaining = Math.max(limit - usedToday, 0);

@@ -47,28 +47,6 @@ function nextUtcMidnightISO() {
   return resetAt.toISOString();
 }
 
-/** Admin email from cookie/session (server-side) */
-async function getAuthedEmail(): Promise<string | null> {
-  try {
-    const supabase = createSupabaseServer();
-    const { data } = await supabase.auth.getUser();
-    return data?.user?.email?.toLowerCase() ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** If client doesn't send userId, fall back to Supabase auth cookie. */
-async function getUserIdFromCookie(): Promise<string | null> {
-  try {
-    const supabase = createSupabaseServer();
-    const { data } = await supabase.auth.getUser();
-    return data.user?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function reserveDailyToken(params: {
   supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
   userId: string;
@@ -89,11 +67,8 @@ async function reserveDailyToken(params: {
 
   if (usage) {
     const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
-    if (resetAtDb && resetAtDb > now) {
-      usedToday = usage.used_today || 0;
-    } else {
-      usedToday = 0;
-    }
+    if (resetAtDb && resetAtDb > now) usedToday = usage.used_today || 0;
+    else usedToday = 0;
   }
 
   await supabaseAdmin.from("proscan_usage").upsert({
@@ -148,7 +123,7 @@ async function rollbackDailyToken(params: {
       reset_at: resetAtISO,
     });
   } catch {
-    // ignore
+    // ignore rollback failure
   }
 }
 
@@ -160,25 +135,22 @@ export async function POST(req: Request) {
     const strategy = body?.strategy;
     const psi = body?.psi;
 
-    const userIdFromBody = body?.userId;
-
     if (!psi) {
       return NextResponse.json({ error: "Missing psi payload" }, { status: 400 });
     }
 
-    let userId: string | null =
-      typeof userIdFromBody === "string" ? userIdFromBody : null;
+    // Cookie auth is the ONLY source of truth
+    const supabaseAuth = createSupabaseServer();
+    const { data: authData } = await supabaseAuth.auth.getUser();
+    const authedUser = authData?.user ?? null;
 
-    if (!userId) {
-      userId = await getUserIdFromCookie();
+    if (!authedUser) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Missing userId (or not authenticated)" },
-        { status: 401 }
-      );
-    }
+    const authedEmail = (authedUser.email ?? "").toLowerCase();
+    const isAdmin = authedEmail === ADMIN_EMAIL;
+    const userId = authedUser.id;
 
     const openaiKey = process.env.OPENAI_API_KEY;
     if (!openaiKey) {
@@ -188,18 +160,17 @@ export async function POST(req: Request) {
     const supabaseAdmin = getSupabaseAdmin();
 
     // ---------------------------------------
-    // ADMIN BYPASS (sales@lustmia.com)
+    // ADMIN BYPASS: skip subscription + quota
     // ---------------------------------------
-    const authedEmail = await getAuthedEmail();
-    const isAdmin = authedEmail === ADMIN_EMAIL;
-
-    // ---------------------------------------
-    // 1) Verify subscription (skip for admin)
-    // ---------------------------------------
-    let plan = "free";
-    let status = "inactive";
+    let reservation:
+      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
+      | null = null;
 
     if (!isAdmin) {
+      // 1) Verify subscription is active + paid
+      let plan = "free";
+      let status = "inactive";
+
       try {
         const { data: sub } = await supabaseAdmin
           .from("proscan_subscriptions")
@@ -223,28 +194,12 @@ export async function POST(req: Request) {
           { status: 402 }
         );
       }
-    } else {
-      // force for admin
-      plan = "agency";
-      status = "active";
-    }
 
-    // ---------------------------------------
-    // 2) Reserve quota BEFORE OpenAI (skip for admin)
-    // ---------------------------------------
-    const limit = computePlanLimit(plan, status);
-
-    let reservation:
-      | (ReturnType<typeof reserveDailyToken> extends Promise<infer R> ? R : never)
-      | null = null;
-
-    if (!isAdmin) {
+      // 2) Reserve quota BEFORE OpenAI
+      const limit = computePlanLimit(plan, status);
       if (!Number.isFinite(limit) || limit <= 0) {
         return NextResponse.json(
-          {
-            error:
-              "AI quota is not available for your plan. Please contact support.",
-          },
+          { error: "AI quota is not available for your plan. Please contact support." },
           { status: 403 }
         );
       }
@@ -364,12 +319,13 @@ ${JSON.stringify(psi).slice(0, 180000)}
     const data = await r.json();
 
     if (!r.ok) {
-      if (!isAdmin && reservation && reservation.ok) {
+      // rollback ONLY if we reserved (non-admin)
+      if (reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
           userId,
           usedTodayBefore: reservation.usedTodayBefore,
-          limit,
+          limit: reservation.limit,
           resetAtISO: reservation.resetAt,
         });
       }
@@ -381,17 +337,15 @@ ${JSON.stringify(psi).slice(0, 180000)}
     }
 
     const text =
-      data?.output?.[0]?.content?.[0]?.text ??
-      data?.output_text ??
-      null;
+      data?.output?.[0]?.content?.[0]?.text ?? data?.output_text ?? null;
 
     if (!text) {
-      if (!isAdmin && reservation && reservation.ok) {
+      if (reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
           userId,
           usedTodayBefore: reservation.usedTodayBefore,
-          limit,
+          limit: reservation.limit,
           resetAtISO: reservation.resetAt,
         });
       }
@@ -402,15 +356,16 @@ ${JSON.stringify(psi).slice(0, 180000)}
     try {
       parsed = JSON.parse(text);
     } catch {
-      if (!isAdmin && reservation && reservation.ok) {
+      if (reservation && reservation.ok) {
         await rollbackDailyToken({
           supabaseAdmin,
           userId,
           usedTodayBefore: reservation.usedTodayBefore,
-          limit,
+          limit: reservation.limit,
           resetAtISO: reservation.resetAt,
         });
       }
+
       return NextResponse.json(
         { error: "AI did not return valid JSON", raw: text },
         { status: 500 }
