@@ -132,7 +132,7 @@ function extractPsiLists(psi: any) {
     })
     .sort(
       (a, b) =>
-        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0),
+        (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0)
     )
     .slice(0, 10);
 
@@ -141,7 +141,7 @@ function extractPsiLists(psi: any) {
       (a) =>
         a.scoreDisplayMode === "numeric" &&
         typeof a.score === "number" &&
-        a.score < 0.9,
+        a.score < 0.9
     )
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1))
     .slice(0, 12);
@@ -220,10 +220,24 @@ function getOrCreateUserId() {
   return id;
 }
 
-/** Admin check — single owner account */
+/**
+ * Admin check:
+ * - Always treat sales@lustmia.com as admin (master user)
+ * - Optionally allow more admins via NEXT_PUBLIC_SUPERUSER_EMAILS="a@b.com,c@d.com"
+ */
 function isAdminEmail(email?: string | null) {
   if (!email) return false;
-  return email.toLowerCase() === "sales@lustmia.com";
+  const e = email.trim().toLowerCase();
+
+  if (e === "sales@lustmia.com") return true;
+
+  const raw = process.env.NEXT_PUBLIC_SUPERUSER_EMAILS || "";
+  const list = raw
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+
+  return list.includes(e);
 }
 
 export default function MetricsPage() {
@@ -260,6 +274,7 @@ export default function MetricsPage() {
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+        // If env vars are missing, do NOT crash the page.
         if (!supabaseUrl || !supabaseAnonKey) {
           if (!mounted) return;
           setIsAdmin(false);
@@ -327,7 +342,8 @@ export default function MetricsPage() {
 
       if (!resCompact.ok)
         throw new Error(compactJson?.error || "Failed to analyze");
-      if (!resRaw.ok) throw new Error(rawJson?.error || "Failed to fetch raw PSI");
+      if (!resRaw.ok)
+        throw new Error(rawJson?.error || "Failed to fetch raw PSI");
 
       setData(compactJson);
       setPsiRaw(rawJson);
@@ -372,7 +388,10 @@ export default function MetricsPage() {
   }
 
   const scores = data?.scores;
-  const lists = useMemo(() => (psiRaw ? extractPsiLists(psiRaw) : null), [psiRaw]);
+  const lists = useMemo(
+    () => (psiRaw ? extractPsiLists(psiRaw) : null),
+    [psiRaw]
+  );
 
   const showOverlay = loading || aiLoading;
   const overlayLabel = aiLoading
@@ -457,6 +476,7 @@ export default function MetricsPage() {
           )}
         </div>
 
+        {/* IMPORTANT: don’t show upgrade button until authLoading resolves */}
         {!authLoading && aiLocked && (
           <Link
             href="/pricing"
@@ -476,14 +496,7 @@ export default function MetricsPage() {
         )}
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -664,13 +677,7 @@ export default function MetricsPage() {
                           background: "rgba(255,255,255,0.02)",
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 10,
-                          }}
-                        >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ fontWeight: 900 }}>{o.title}</div>
                           <div style={{ opacity: 0.85, whiteSpace: "nowrap" }}>
                             {o.impact || o.displayValue || ""}
