@@ -28,7 +28,7 @@ export default function AboutPage() {
               <Link2 className="w-5 h-5 text-fuchsia-300" />
             </div>
             <span className="font-semibold tracking-tight text-sm md:text-base">
-              Lustmia Backlinks
+              Rankcore.ai Backlinks
             </span>
           </div>
 
@@ -74,9 +74,9 @@ export default function AboutPage() {
             </h1>
 
             <p className="mt-4 text-sm md:text-base text-white/70 leading-relaxed">
-              Lustmia Backlinks started as a tool we hacked together to protect
-              a few client sites from spammy links and sudden authority drops.
-              It quickly became obvious that the existing backlink tools were
+              Rankcore.ai started as a tool we hacked together to protect a few
+              client sites from spammy links and sudden authority drops. It
+              quickly became obvious that the existing backlink tools were
               either too heavy, too noisy, or too slow to catch the problems
               that actually matter. We wanted something different: a clean,
               focused dashboard that tells you exactly what&apos;s happening to your
@@ -84,11 +84,10 @@ export default function AboutPage() {
             </p>
 
             <p className="mt-3 text-sm md:text-base text-white/70 leading-relaxed">
-              Today, Lustmia helps founders, in-house SEOs and boutique
+              Today, Rankcore.ai helps founders, in-house SEOs and boutique
               agencies keep a permanent radar on their backlinks. No enterprise
-              training, no 40-tab reports—just clear signal on authority
-              trends, toxic clusters, and the competitors who are quietly
-              catching up.
+              training, no 40-tab reports—just clear signal on authority trends,
+              toxic clusters, and the competitors who are quietly catching up.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -146,7 +145,7 @@ export default function AboutPage() {
 
               <div className="mt-5 h-28 rounded-2xl bg-gradient-to-r from-fuchsia-600/40 via-indigo-500/40 to-cyan-400/40 flex items-center justify-center text-[11px] text-white/80 text-center px-4">
                 Imagine this panel filled with your own link graph, authority
-                bands and risk zones. That&apos;s what Lustmia keeps updated for
+                bands and risk zones. That&apos;s what Rankcore.ai keeps updated for
                 you—without you needing to log into five tools.
               </div>
             </div>
@@ -163,13 +162,12 @@ export default function AboutPage() {
               dashboards still feel like spreadsheets with gradients. When our
               own projects and client sites were hit by low-quality link bursts
               and negative SEO, we realised the hardest part wasn&apos;t finding
-              data—it was seeing the story inside the data fast enough to
-              react.
+              data—it was seeing the story inside the data fast enough to react.
             </p>
             <p className="text-sm md:text-base text-white/70 leading-relaxed">
-              Lustmia is our answer to that. We focus on the few questions that
-              actually matter: Is your authority decaying or growing? Are you
-              picking up risky link patterns? Who is linking to your
+              Rankcore.ai is our answer to that. We focus on the few questions
+              that actually matter: Is your authority decaying or growing? Are
+              you picking up risky link patterns? Who is linking to your
               competitors that should probably know about you? Everything else
               is secondary. If we can show you these answers in under a minute,
               we&apos;re doing our job.
@@ -182,8 +180,8 @@ export default function AboutPage() {
               Our focus
             </div>
             <p className="text-xs text-white/70 leading-relaxed">
-              Lustmia is not trying to be &quot;everything SEO&quot;. We specialize in
-              backlinks and link health so we can go deeper, ship faster and
+              Rankcore.ai is not trying to be &quot;everything SEO&quot;. We specialize
+              in backlinks and link health so we can go deeper, ship faster and
               stay obsessively aligned with what link builders and SEOs actually
               need day to day.
             </p>
@@ -193,7 +191,7 @@ export default function AboutPage() {
         {/* VALUES CARDS */}
         <section className="mt-6 space-y-4">
           <h2 className="text-xl md:text-2xl font-semibold">
-            The principles behind Lustmia Backlinks
+            The principles behind Rankcore.ai
           </h2>
           <div className="grid md:grid-cols-3 gap-4">
             <div className="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2">
@@ -215,9 +213,9 @@ export default function AboutPage() {
                 Protection first
               </div>
               <p className="text-xs text-white/70 leading-relaxed">
-                Backlinks are an attack surface. Sudden spammy campaigns,
-                cheap PBN packages, &quot;helpful&quot; directory blasts—these can hurt
-                real brands. We treat Lustmia as a link-health firewall: always
+                Backlinks are an attack surface. Sudden spammy campaigns, cheap
+                PBN packages, &quot;helpful&quot; directory blasts—these can hurt real
+                brands. We treat Rankcore.ai as a link-health firewall: always
                 watching, always looking for weird patterns before they show up
                 in rankings.
               </p>
@@ -229,7 +227,7 @@ export default function AboutPage() {
                 Built with SEOs, not just for them
               </div>
               <p className="text-xs text-white/70 leading-relaxed">
-                Lustmia is shaped in conversation with agency owners, solo
+                Rankcore.ai is shaped in conversation with agency owners, solo
                 link builders and in-house leads. We ship features that remove
                 real headaches: &quot;Can my client see this?&quot;, &quot;How do I prove
                 toxic cleanup?&quot;, &quot;What changed since last month?&quot;
@@ -242,11 +240,10 @@ export default function AboutPage() {
         <section className="mt-8 grid md:grid-cols-[2fr,3fr] gap-6 items-start">
           <div className="rounded-2xl bg-white/5 border border-white/10 p-5 space-y-3">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <Users className="w-4 h-4 text-fuchsia-300" />
-              A small, focused team
+              <Users className="w-4 h-4 text-fuchsia-300" />A small, focused team
             </div>
             <p className="text-sm text-white/70 leading-relaxed">
-              Lustmia is intentionally small. We don&apos;t have an enterprise
+              Rankcore.ai is intentionally small. We don&apos;t have an enterprise
               sales team or a giant roadmap committee. That means we can listen,
               respond and ship in tight cycles. When users ask for better
               reporting for clients, or faster detection of a new spam pattern,
@@ -265,7 +262,7 @@ export default function AboutPage() {
               Where we&apos;re going
             </div>
             <p className="text-sm text-white/70 leading-relaxed">
-              Over the next year, we&apos;re expanding Lustmia beyond monitoring
+              Over the next year, we&apos;re expanding Rankcore.ai beyond monitoring
               into an opinionated &quot;link operations&quot; layer: smarter alerts,
               suggested disavow files, outreach targets based on your existing
               profile, and white-label reports that clients actually read.
@@ -287,7 +284,7 @@ export default function AboutPage() {
             </h3>
             <p className="mt-1 text-sm text-white/80 max-w-xl">
               Start with the free plan, plug in your primary domain and see how
-              Lustmia explains your current link reality—authority, risk and
+              Rankcore.ai explains your current link reality—authority, risk and
               opportunities—in a single place.
             </p>
           </div>
@@ -309,7 +306,7 @@ export default function AboutPage() {
         </section>
 
         <footer className="py-4 text-[11px] text-white/40 border-t border-white/10">
-          © {new Date().getFullYear()} Lustmia. Built for people who actually
+          © {new Date().getFullYear()} Rankcore.ai. Built for people who actually
           care about backlinks.
         </footer>
       </div>
