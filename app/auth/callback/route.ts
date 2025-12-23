@@ -1,60 +1,75 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import type { NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
-// IMPORTANT:
-// This route runs on the server (route handler).
-// It verifies magic-link params and then redirects to /dashboard (or ?next=...).
-
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-
-  // Supports your existing ?next=/dashboard usage
+export async function GET(req: NextRequest) {
+  const url = req.nextUrl;
   const next = url.searchParams.get("next") || "/dashboard";
 
-  const token_hash = url.searchParams.get("token_hash");
-  const type = url.searchParams.get("type"); // usually "magiclink" or "email"
+  // Supabase magic links commonly return ?code=... (PKCE)
+  const code = url.searchParams.get("code");
 
-  // If Supabase returns errors as query params/fragments, handle gracefully
-  const error_description =
+  // Handle errors coming back from Supabase
+  const errorDescription =
     url.searchParams.get("error_description") ||
     url.searchParams.get("error") ||
     "";
 
-  if (error_description) {
-    // Send user back to login with a readable message
+  if (errorDescription) {
     const loginUrl = new URL("/login", url.origin);
     loginUrl.searchParams.set("next", next);
-    loginUrl.searchParams.set("error", error_description);
+    loginUrl.searchParams.set("error", errorDescription);
     return NextResponse.redirect(loginUrl);
   }
 
-  // If we don't have token_hash/type, just go home (or login)
-  if (!token_hash || !type) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnon =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnon) {
     const loginUrl = new URL("/login", url.origin);
     loginUrl.searchParams.set("next", next);
-    loginUrl.searchParams.set("error", "Missing magic link parameters.");
+    loginUrl.searchParams.set("error", "Missing Supabase env vars.");
     return NextResponse.redirect(loginUrl);
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  // This response object will receive cookies
+  const res = NextResponse.next();
 
-  // Server-side client (no cookies here). We'll verify the OTP and then
-  // redirect back to the app; the browser-side client will now have a valid session.
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-  const { error } = await supabase.auth.verifyOtp({
-    type: type as any,
-    token_hash,
+  // Create SSR client that can READ/WRITE cookies
+  const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+    cookies: {
+      get(name) {
+        return req.cookies.get(name)?.value;
+      },
+      set(name, value, options) {
+        res.cookies.set({ name, value, ...options });
+      },
+      remove(name, options) {
+        res.cookies.set({ name, value: "", ...options });
+      },
+    },
   });
 
-  if (error) {
-    const loginUrl = new URL("/login", url.origin);
-    loginUrl.searchParams.set("next", next);
-    loginUrl.searchParams.set("error", error.message);
-    return NextResponse.redirect(loginUrl);
+  if (code) {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error) {
+      const loginUrl = new URL("/login", url.origin);
+      loginUrl.searchParams.set("next", next);
+      loginUrl.searchParams.set("error", error.message);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // IMPORTANT: redirect using the same headers that include Set-Cookie
+    return NextResponse.redirect(new URL(next, url.origin), {
+      headers: res.headers,
+    });
   }
 
-  // Success → straight to dashboard
-  return NextResponse.redirect(new URL(next, url.origin));
+  // If the link doesn't contain ?code=..., we can't complete login
+  const loginUrl = new URL("/login", url.origin);
+  loginUrl.searchParams.set("next", next);
+  loginUrl.searchParams.set("error", "Missing auth code in magic link.");
+  return NextResponse.redirect(loginUrl);
 }
