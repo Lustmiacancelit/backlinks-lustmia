@@ -72,7 +72,7 @@ function LoginInner() {
           <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
             <Link2 className="w-5 h-5 text-fuchsia-300" />
           </div>
-          <span className="text-lg">Lustmia Backlinks</span>
+          <span className="text-lg">Rankcore.ai</span>
         </div>
 
         <div className="mt-6 space-y-2">
