@@ -17,6 +17,7 @@ function LoginInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // If user is already logged in, skip login and send to dashboard (or ?next=)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) {
@@ -39,22 +40,28 @@ function LoginInner() {
 
     try {
       const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        next
+        next,
       )}`;
 
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error: otpError } = await supabase.auth.signInWithOtp({
         email: trimmedEmail,
         options: { emailRedirectTo: redirectTo },
       });
 
-      if (error) {
-        setError(error.message);
+      if (otpError) {
+        // Supabase often rate-limits or delays sending; keep message user-friendly
+        setError(
+          "We couldn’t send the magic link right now. Please wait 2–5 minutes and check spam/junk. If it still doesn’t arrive after 5 minutes, try again.",
+        );
         return;
       }
 
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || "Something went wrong. Please try again.");
+      setError(
+        err?.message ||
+          "Something went wrong. Please wait 2–5 minutes and try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -88,8 +95,16 @@ function LoginInner() {
 
         <div className="mt-5">
           {sent ? (
-            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 p-4 text-sm text-emerald-200">
-              Magic link sent. Check your inbox and click it to continue.
+            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 p-4 text-sm text-emerald-200 space-y-2">
+              <div className="font-semibold">Magic link sent 🚀</div>
+              <div className="text-emerald-100/90">
+                Delivery can take <b>2–5 minutes</b>. Please check your inbox and
+                spam/junk folder.
+              </div>
+              <div className="text-emerald-100/80 text-xs">
+                If nothing arrives after 5 minutes, go back and request a new
+                link.
+              </div>
             </div>
           ) : (
             <form onSubmit={onLogin} className="space-y-3">
@@ -106,7 +121,7 @@ function LoginInner() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || sent}
                 className="w-full py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2"
               >
                 {loading ? "Sending…" : "Send magic link"}
