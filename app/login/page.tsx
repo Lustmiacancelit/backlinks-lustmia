@@ -17,7 +17,6 @@ function LoginInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If user is already logged in, skip login and send to dashboard (or ?next=)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) {
