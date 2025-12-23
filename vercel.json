@@ -8,5 +8,18 @@
       "path": "/api/toxic-sweeps/run",
       "schedule": "0 */6 * * *"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "backlinks.lustmia.com"
+        }
+      ],
+      "destination": "https://rankcore.ai/$1",
+      "permanent": true
+    }
   ]
 }
