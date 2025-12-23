@@ -15,29 +15,29 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Lustmia Pro",
-    template: "%s | Lustmia Pro",
+    default: "Rankcore.ai",
+    template: "%s | Rankcore.ai",
   },
   description:
-    "Lustmia Pro — Backlink intelligence, toxicity detection, competitor analysis, and automated SEO monitoring.",
+    "Rankcore.ai — AI-powered backlink intelligence, toxicity detection, competitor analysis, and automated SEO monitoring.",
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico",
     apple: "/apple-touch-icon.png",
   },
   openGraph: {
-    title: "Lustmia Pro",
+    title: "Rankcore.ai",
     description:
-      "Backlink analytics powered by AI — toxicity detection, competitor gap analysis, automated monitoring.",
-    url: "https://backlinks.lustmia.com",
-    siteName: "Lustmia Pro",
+      "AI-powered backlink intelligence with toxicity detection, competitor gap analysis, and automated monitoring.",
+    url: "https://rankcore.ai",
+    siteName: "Rankcore.ai",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Lustmia Pro",
+    title: "Rankcore.ai",
     description:
-      "AI-powered backlink insights, toxicity detection, and competitor analysis.",
+      "AI-powered backlink intelligence, toxicity detection, and competitor analysis.",
   },
 };
 
@@ -49,7 +49,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#05030b] text-white`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}
       >
         {children}
         <SpeedInsights />
