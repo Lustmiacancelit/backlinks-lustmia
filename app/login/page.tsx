@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowserClient } from "@/lib/supabase/browser";
 import { ArrowRight, Link2, Sparkles } from "lucide-react";
@@ -8,21 +8,22 @@ import { ArrowRight, Link2, Sparkles } from "lucide-react";
 function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/dashboard";
 
+  const next = params.get("next") || "/dashboard";
+  const callbackError = params.get("error"); // from /auth/callback redirect
   const supabase = supabaseBrowserClient;
 
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(callbackError);
+
+  const estimatedMinutes = useMemo(() => "1–3", []);
 
   // If user is already logged in, skip login and send to dashboard (or ?next=)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        router.replace(next || "/dashboard");
-      }
+      if (data?.user) router.replace(next);
     });
   }, [router, next, supabase]);
 
@@ -39,29 +40,24 @@ function LoginInner() {
     setLoading(true);
 
     try {
+      // Magic link MUST return to /auth/callback so it can verify token_hash and redirect
       const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
         next,
       )}`;
 
-      const { error: otpError } = await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signInWithOtp({
         email: trimmedEmail,
         options: { emailRedirectTo: redirectTo },
       });
 
-      if (otpError) {
-        // Supabase often rate-limits or delays sending; keep message user-friendly
-        setError(
-          "We couldn’t send the magic link right now. Please wait 2–5 minutes and check spam/junk. If it still doesn’t arrive after 5 minutes, try again.",
-        );
+      if (error) {
+        setError(error.message);
         return;
       }
 
       setSent(true);
     } catch (err: any) {
-      setError(
-        err?.message ||
-          "Something went wrong. Please wait 2–5 minutes and try again.",
-      );
+      setError(err?.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -89,21 +85,19 @@ function LoginInner() {
 
           <h1 className="text-2xl font-bold">Log in to your dashboard</h1>
           <p className="text-white/70 text-sm">
-            We’ll send you a one-tap magic link. No password needed.
+            We’ll email you a one-tap magic link (usually arrives in {estimatedMinutes} minutes).
           </p>
         </div>
 
         <div className="mt-5">
           {sent ? (
             <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 p-4 text-sm text-emerald-200 space-y-2">
-              <div className="font-semibold">Magic link sent 🚀</div>
-              <div className="text-emerald-100/90">
-                Delivery can take <b>2–5 minutes</b>. Please check your inbox and
-                spam/junk folder.
+              <div className="font-semibold">Magic link sent ✅</div>
+              <div>
+                It usually arrives in <b>{estimatedMinutes} minutes</b>. Check spam/promotions too.
               </div>
-              <div className="text-emerald-100/80 text-xs">
-                If nothing arrives after 5 minutes, go back and request a new
-                link.
+              <div className="text-emerald-200/80 text-xs">
+                If it doesn’t show up, wait 3 minutes and try again.
               </div>
             </div>
           ) : (
@@ -117,11 +111,15 @@ function LoginInner() {
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 outline-none placeholder:text-white/35"
               />
 
-              {error && <div className="text-red-300 text-sm">{error}</div>}
+              {error && (
+                <div className="rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-red-200 text-sm">
+                  {error}
+                </div>
+              )}
 
               <button
                 type="submit"
-                disabled={loading || sent}
+                disabled={loading}
                 className="w-full py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 font-semibold disabled:opacity-60 inline-flex items-center justify-center gap-2"
               >
                 {loading ? "Sending…" : "Send magic link"}
