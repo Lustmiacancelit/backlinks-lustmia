@@ -12,20 +12,18 @@ export default function HomePage() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // used by navbar Sign In / Sign Up → go to /login
   function goToLogin() {
     const trimmed = email.trim();
     if (trimmed) {
       try {
         localStorage.setItem("lead_email", trimmed);
       } catch {
-        // ignore if localStorage not available
+        // ignore
       }
     }
     router.push("/login");
   }
 
-  // used by "Start free scan" → send magic link
   async function handleStartFreeScan() {
     const trimmed = email.trim();
 
@@ -38,7 +36,6 @@ export default function HomePage() {
     setStatus("sending");
     setErrorMsg(null);
 
-    // keep existing behaviour: store lead email for pricing / login
     try {
       localStorage.setItem("lead_email", trimmed);
     } catch {
@@ -46,7 +43,9 @@ export default function HomePage() {
     }
 
     const redirectTo =
-      typeof window !== "undefined" ? `${window.location.origin}/dashboard` : undefined;
+      typeof window !== "undefined"
+        ? `${window.location.origin}/auth/callback?next=${encodeURIComponent("/dashboard")}`
+        : undefined;
 
     const { error } = await supabaseBrowserClient.auth.signInWithOtp({
       email: trimmed,
