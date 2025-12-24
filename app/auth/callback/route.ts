@@ -6,10 +6,8 @@ export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const next = url.searchParams.get("next") || "/dashboard";
 
-  // Supabase magic links commonly return ?code=... (PKCE)
   const code = url.searchParams.get("code");
 
-  // Handle errors coming back from Supabase
   const errorDescription =
     url.searchParams.get("error_description") ||
     url.searchParams.get("error") ||
@@ -22,54 +20,53 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnon =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnon) {
+  if (!code) {
     const loginUrl = new URL("/login", url.origin);
     loginUrl.searchParams.set("next", next);
-    loginUrl.searchParams.set("error", "Missing Supabase env vars.");
+    loginUrl.searchParams.set(
+      "error",
+      "Missing auth code. Please request a new magic link."
+    );
     return NextResponse.redirect(loginUrl);
   }
 
-  // This response object will receive cookies
-  const res = NextResponse.next();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // Create SSR client that can READ/WRITE cookies
-  const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    const loginUrl = new URL("/login", url.origin);
+    loginUrl.searchParams.set("next", next);
+    loginUrl.searchParams.set("error", "Supabase configuration error.");
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // ✅ Create the redirect response up-front
+  const redirectResponse = NextResponse.redirect(new URL(next, url.origin));
+
+  // ✅ SSR client writes cookies onto redirectResponse
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       get(name) {
         return req.cookies.get(name)?.value;
       },
       set(name, value, options) {
-        res.cookies.set({ name, value, ...options });
+        redirectResponse.cookies.set({ name, value, ...options });
       },
       remove(name, options) {
-        res.cookies.set({ name, value: "", ...options });
+        redirectResponse.cookies.set({ name, value: "", ...options });
       },
     },
   });
 
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
 
-    if (error) {
-      const loginUrl = new URL("/login", url.origin);
-      loginUrl.searchParams.set("next", next);
-      loginUrl.searchParams.set("error", error.message);
-      return NextResponse.redirect(loginUrl);
-    }
-
-    // IMPORTANT: redirect using the same headers that include Set-Cookie
-    return NextResponse.redirect(new URL(next, url.origin), {
-      headers: res.headers,
-    });
+  if (error) {
+    const loginUrl = new URL("/login", url.origin);
+    loginUrl.searchParams.set("next", next);
+    loginUrl.searchParams.set("error", error.message);
+    return NextResponse.redirect(loginUrl);
   }
 
-  // If the link doesn't contain ?code=..., we can't complete login
-  const loginUrl = new URL("/login", url.origin);
-  loginUrl.searchParams.set("next", next);
-  loginUrl.searchParams.set("error", "Missing auth code in magic link.");
-  return NextResponse.redirect(loginUrl);
+  // ✅ Cookies are already attached to redirectResponse
+  return redirectResponse;
 }

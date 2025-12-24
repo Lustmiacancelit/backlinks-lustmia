@@ -3,13 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Sparkles, ArrowRight, BarChart3, ShieldCheck, Globe } from "lucide-react";
+import {
+  Sparkles,
+  ArrowRight,
+  BarChart3,
+  ShieldCheck,
+  Globe,
+} from "lucide-react";
 import { supabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function HomePage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle",
+  );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   function goToLogin() {
@@ -42,9 +50,12 @@ export default function HomePage() {
       // ignore
     }
 
+    // ✅ Always go through /auth/callback so cookies get set before /dashboard
     const redirectTo =
       typeof window !== "undefined"
-        ? `${window.location.origin}/auth/callback?next=${encodeURIComponent("/dashboard")}`
+        ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+            "/dashboard",
+          )}`
         : undefined;
 
     const { error } = await supabaseBrowserClient.auth.signInWithOtp({
@@ -56,7 +67,9 @@ export default function HomePage() {
 
     if (error) {
       console.error(error);
-      setErrorMsg("Could not send the magic link. Please try again in a moment.");
+      setErrorMsg(
+        "Could not send the magic link. Please wait 1–2 minutes and try again.",
+      );
       setStatus("error");
       return;
     }
@@ -92,7 +105,9 @@ export default function HomePage() {
             </div>
             <div className="flex flex-col leading-tight text-left">
               <span className="font-semibold text-lg">Rankcore.ai</span>
-              <span className="text-[11px] text-white/60">Backlink Intelligence</span>
+              <span className="text-[11px] text-white/60">
+                Backlink Intelligence
+              </span>
             </div>
           </button>
 
@@ -101,18 +116,29 @@ export default function HomePage() {
             <button
               className="hover:text-white"
               onClick={() =>
-                document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })
+                document
+                  .getElementById("features")
+                  ?.scrollIntoView({ behavior: "smooth" })
               }
             >
               Features
             </button>
-            <button className="hover:text-white" onClick={() => router.push("/pricing")}>
+            <button
+              className="hover:text-white"
+              onClick={() => router.push("/pricing")}
+            >
               Pricing
             </button>
-            <button className="hover:text-white" onClick={() => router.push("/blog")}>
+            <button
+              className="hover:text-white"
+              onClick={() => router.push("/blog")}
+            >
               Blog
             </button>
-            <button className="hover:text-white" onClick={() => router.push("/about")}>
+            <button
+              className="hover:text-white"
+              onClick={() => router.push("/about")}
+            >
               About
             </button>
           </nav>
@@ -152,9 +178,9 @@ export default function HomePage() {
             </h1>
 
             <p className="text-white/70 text-sm sm:text-base max-w-xl">
-              Rankcore.ai watches your backlink profile so you don&apos;t have to. See authority
-              trends, find toxic links, and understand who&apos;s linking to you — all in one clean
-              dashboard.
+              Rankcore.ai watches your backlink profile so you don&apos;t have to.
+              See authority trends, find toxic links, and understand who&apos;s
+              linking to you — all in one clean dashboard.
             </p>
 
             {/* Email + CTA */}
@@ -175,13 +201,17 @@ export default function HomePage() {
                   disabled={status === "sending"}
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold disabled:opacity-60"
                 >
-                  {status === "sending" ? "Sending magic link..." : "Start free scan"}
+                  {status === "sending"
+                    ? "Sending magic link..."
+                    : "Start free scan"}
                   <ArrowRight className="w-4 h-4" />
                 </button>
 
                 <button
                   onClick={() =>
-                    document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })
+                    document
+                      .getElementById("features")
+                      ?.scrollIntoView({ behavior: "smooth" })
                   }
                   className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10"
                 >
@@ -190,13 +220,15 @@ export default function HomePage() {
               </div>
 
               <p className="text-[11px] text-white/50">
-                We&apos;ll email you a magic link. No passwords. Free tier includes limited scans so
-                you can try it safely.
+                We&apos;ll email you a magic link (usually arrives in{" "}
+                <span className="text-white/80 font-medium">30–90 seconds</span>
+                ). No passwords.
               </p>
 
               {status === "sent" && (
                 <p className="text-[11px] text-emerald-300">
-                  Magic link sent! Check your inbox to open your dashboard.
+                  Magic link sent! It usually arrives in 30–90 seconds. Check
+                  Spam/Promotions if you don&apos;t see it.
                 </p>
               )}
 
@@ -216,15 +248,20 @@ export default function HomePage() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold">Rankcore.ai Bot</div>
-                    <div className="text-[11px] text-white/60">Backlink assistant</div>
+                    <div className="text-[11px] text-white/60">
+                      Backlink assistant
+                    </div>
                   </div>
                 </div>
-                <span className="text-[10px] text-emerald-300">Monitoring · 24/7</span>
+                <span className="text-[10px] text-emerald-300">
+                  Monitoring · 24/7
+                </span>
               </div>
 
               <div className="space-y-2 text-xs">
                 <div className="rounded-2xl bg-white/5 border border-white/10 p-3 max-w-[80%]">
-                  I found <b>42</b> new backlinks this week. 4 look risky — want a quick summary?
+                  I found <b>42</b> new backlinks this week. 4 look risky — want
+                  a quick summary?
                 </div>
                 <div className="flex justify-end">
                   <div className="rounded-2xl bg-fuchsia-600/80 px-3 py-2 max-w-[80%]">
@@ -232,8 +269,8 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="rounded-2xl bg-white/5 border border-white/10 p-3 max-w-[85%]">
-                  3 links are from spam directories and 1 from a hacked blog. I&apos;ve drafted
-                  outreach emails you can send in one click.
+                  3 links are from spam directories and 1 from a hacked blog.
+                  I&apos;ve drafted outreach emails you can send in one click.
                 </div>
               </div>
             </div>
@@ -244,8 +281,8 @@ export default function HomePage() {
         <section id="features" className="pt-4 space-y-4">
           <h2 className="text-xl font-semibold">What Rankcore.ai does for you</h2>
           <p className="text-sm text-white/65 max-w-2xl">
-            Built for SEOs, founders, and agencies who want backlink clarity without spreadsheets or
-            manual crawling.
+            Built for SEOs, founders, and agencies who want backlink clarity
+            without spreadsheets or manual crawling.
           </p>
 
           <div className="grid md:grid-cols-3 gap-4">
