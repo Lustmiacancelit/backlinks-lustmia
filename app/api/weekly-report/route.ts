@@ -10,8 +10,7 @@ type ToxicSweepSettingsRow = {
   weekly_reports_enabled: boolean;
 };
 
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://rankcore.ai";
 
 function buildWeeklyReportEmail(options: {
   totalBacklinks: number;
@@ -21,14 +20,14 @@ function buildWeeklyReportEmail(options: {
 }) {
   const { totalBacklinks, reportUrl, unsubscribeUrl, openPixelUrl } = options;
 
-  const subject = "Your Lustmia backlink report";
+  const subject = "Your Rankcore.ai backlink report";
 
   const html = `
   <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#111827; background:#f3f4f6; padding:24px;">
     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
       <tr>
         <td style="padding:20px 24px;background:#111827;color:#f9fafb;">
-          <h1 style="margin:0;font-size:20px;font-weight:600;">Lustmia</h1>
+          <h1 style="margin:0;font-size:20px;font-weight:600;">Rankcore.ai</h1>
           <p style="margin:4px 0 0;font-size:13px;color:#e5e7eb;">Weekly backlink report</p>
         </td>
       </tr>
@@ -43,7 +42,7 @@ function buildWeeklyReportEmail(options: {
           </div>
 
           <p style="margin:16px 0 20px;font-size:14px;line-height:1.5;color:#374151;">
-            Log into Lustmia Pro to see toxic links, new referring domains, anchor text,
+            Log into Rankcore.ai to see toxic links, new referring domains, anchor text,
             and other detailed metrics.
           </p>
 
@@ -57,13 +56,13 @@ function buildWeeklyReportEmail(options: {
       <tr>
         <td style="padding:16px 24px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
           <p style="margin:0 0 8px;">
-            You are receiving this because weekly reports are enabled in your Lustmia settings.
+            You are receiving this because weekly reports are enabled in your Rankcore.ai settings.
           </p>
           <p style="margin:0 0 8px;">
             <a href="${unsubscribeUrl}" style="color:#4b5563;">Manage notification settings</a>
           </p>
           <p style="margin:0;font-size:11px;color:#9ca3af;">
-            &copy; ${new Date().getFullYear()} Lustmia. All rights reserved.
+            &copy; ${new Date().getFullYear()} Rankcore.ai. All rights reserved.
           </p>
         </td>
       </tr>
@@ -75,7 +74,7 @@ function buildWeeklyReportEmail(options: {
   `;
 
   const text = `
-Your Lustmia backlink report
+Your Rankcore.ai backlink report
 
 Total backlinks: ${totalBacklinks}
 
@@ -100,10 +99,7 @@ export async function POST() {
       .eq("weekly_reports_enabled", true);
 
     if (settingsError) {
-      console.error(
-        "[weekly-report] Error loading settings rows:",
-        settingsError
-      );
+      console.error("[weekly-report] Error loading settings rows:", settingsError);
       return NextResponse.json(
         {
           ok: false,
@@ -111,7 +107,7 @@ export async function POST() {
           supabaseError: settingsError.message,
           supabaseCode: settingsError.code,
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -130,29 +126,28 @@ export async function POST() {
     for (const setting of settings) {
       const { user_id, email } = setting;
 
-      // 2) Load that user’s backlinks
-      const { data: backlinks, error: backlinksError } = await supabaseAdmin
+      // 2) Count that user’s backlinks (cheap count)
+      const { count, error: backlinksError } = await supabaseAdmin
         .from("backlinks")
-        .select("*", { count: "exact", head: true }) // cheap count
+        .select("*", { count: "exact", head: true })
         .eq("user_id", user_id);
 
       if (backlinksError) {
         console.error(
-          `[weekly-report] Error loading backlinks for user ${user_id}:`,
-          backlinksError
+          `[weekly-report] Error counting backlinks for user ${user_id}:`,
+          backlinksError,
         );
         continue;
       }
 
-      // If you prefer, you can query with select("*") and use .length;
-      // here we just trust the count:
-      const totalBacklinks = (backlinks as any)?.length ?? 0;
+      const totalBacklinks = count ?? 0;
 
       const token = uuidv4();
       const sentAt = new Date().toISOString();
 
-      const reportUrl = `${SITE_URL}/app/dashboard`;
-      const unsubscribeUrl = `${SITE_URL}/app/settings/notifications?source=weekly_report`;
+      // Your app routes are /dashboard and /dashboard/settings
+      const reportUrl = `${SITE_URL}/dashboard`;
+      const unsubscribeUrl = `${SITE_URL}/dashboard/settings?tab=notifications&source=weekly_report`;
       const openPixelUrl = `${SITE_URL}/api/email/open.gif?token=${token}`;
 
       const { subject, html, text } = buildWeeklyReportEmail({
@@ -188,22 +183,20 @@ export async function POST() {
       } catch (insertError) {
         console.error(
           `[weekly-report] Failed to log email_sends for user ${user_id}:`,
-          insertError
+          insertError,
         );
       }
 
       if (emailResult.ok) {
         sentCount += 1;
       } else {
-        console.warn(
-          `[weekly-report] sendEmail failed for ${email}: ${emailResult.error}`
-        );
+        console.warn(`[weekly-report] sendEmail failed for ${email}: ${emailResult.error}`);
       }
     }
 
     console.log(
       "[weekly-report] Cron finished.",
-      `Total active rows: ${settings.length}, emails sent OK: ${sentCount}`
+      `Total active rows: ${settings.length}, emails sent OK: ${sentCount}`,
     );
 
     return NextResponse.json({
@@ -219,7 +212,7 @@ export async function POST() {
         ok: false,
         error: err?.message ?? "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

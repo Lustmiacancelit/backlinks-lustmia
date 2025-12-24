@@ -28,9 +28,7 @@ function getSupabaseAdmin() {
     );
   }
 
-  return createClient(url, key, {
-    auth: { persistSession: false },
-  });
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 /**
@@ -160,8 +158,8 @@ export async function GET(req: Request) {
       authedUserId = null;
     }
 
-    // Fallback: try to extract email from cookie if auth.getUser failed
-    // (cannot reliably extract userId from this fallback)
+    // Fallback: read Supabase auth cookie directly and extract email
+    // (NOTE: we cannot reliably extract userId from this fallback)
     if (!authedEmail) {
       authedEmail = tryGetEmailFromSupabaseCookie(req);
     }
@@ -169,7 +167,7 @@ export async function GET(req: Request) {
     const isAdmin = authedEmail === ADMIN_EMAIL;
 
     // IMPORTANT:
-    // - If authenticated, ALWAYS use authedUserId (ignore spoofable ?u=)
+    // - If user is authenticated, ALWAYS use authedUserId (ignore spoofable ?u=)
     // - If not authenticated, fall back to ?u= or demo id
     const userIdParam = searchParams.get("u");
     const userId = isAdmin
@@ -204,15 +202,16 @@ export async function GET(req: Request) {
     let resetAtISO: string | null = null;
 
     // 1) Read subscription (if exists)
+    // IMPORTANT: your table uses plan_id (NOT plan)
     try {
       const { data: sub } = await supabaseAdmin
         .from("proscan_subscriptions")
-        .select("plan,status,current_period_end")
+        .select("plan_id,status,current_period_end")
         .eq("user_id", userId)
         .maybeSingle();
 
       if (sub) {
-        plan = (sub.plan || plan).toLowerCase();
+        plan = String(sub.plan_id || plan).toLowerCase();
         status = sub.status || status;
       }
     } catch {
@@ -236,11 +235,8 @@ export async function GET(req: Request) {
       if (usage) {
         const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
 
-        if (resetAtDb && resetAtDb > now) {
-          usedToday = usage.used_today || 0;
-        } else {
-          usedToday = 0;
-        }
+        if (resetAtDb && resetAtDb > now) usedToday = usage.used_today || 0;
+        else usedToday = 0;
       }
 
       await supabaseAdmin.from("proscan_usage").upsert({

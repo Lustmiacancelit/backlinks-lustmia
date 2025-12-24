@@ -21,16 +21,13 @@ const navItems = [
   },
   { href: "/dashboard/clients", key: "clients", label: "Clients" },
   { href: "/dashboard/competitors", key: "competitors", label: "Competitors" },
-  { href: "/dashboard/metrics", key: "metrics", label: "Metrics" }, // ✅ added
+  { href: "/dashboard/metrics", key: "metrics", label: "Metrics" },
   { href: "/dashboard/toxic-links", key: "toxic-links", label: "Toxic Links" },
   { href: "/dashboard/billing", key: "billing", label: "Billing" },
   { href: "/dashboard/settings", key: "settings", label: "Settings" },
 ];
 
-export default function DashboardLayout({
-  children,
-  active,
-}: DashboardLayoutProps) {
+export default function DashboardLayout({ children, active }: DashboardLayoutProps) {
   const pathname = usePathname();
 
   // derive an active key from pathname if not explicitly passed
@@ -39,14 +36,14 @@ export default function DashboardLayout({
     (navItems.find((item) => pathname?.startsWith(item.href))?.key ?? "overview");
 
   return (
-    <div className="min-h-screen bg-[#05030b] text-white flex">
+    <div className="min-h-screen bg-black text-white flex">
       {/* SIDEBAR */}
       <aside className="hidden md:flex md:flex-col w-64 border-r border-white/10 bg-black/40 backdrop-blur-xl">
         <div className="px-5 py-4 border-b border-white/10">
           <Link href="/dashboard" className="flex items-center gap-3">
             <Image
-              src="/lustmia-pro-logo.png"
-              alt="Lustmia Pro"
+              src="/rankcore-pro-logo.png"
+              alt="Rankcore.ai"
               width={32}
               height={32}
               priority
@@ -54,7 +51,7 @@ export default function DashboardLayout({
             />
             <div>
               <div className="text-[10px] uppercase tracking-[0.24em] text-white/40">
-                Lustmia
+                Rankcore.ai
               </div>
               <div className="font-semibold text-lg leading-tight">
                 Backlink Studio
@@ -72,7 +69,7 @@ export default function DashboardLayout({
                 "flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors border",
                 derivedActive === item.key
                   ? "bg-white/10 border-white/30"
-                  : "bg-transparent border-transparent text-white/70 hover:bg-white/5 hover:border-white/20"
+                  : "bg-transparent border-transparent text-white/70 hover:bg-white/5 hover:border-white/20",
               )}
             >
               <span>{item.label}</span>
@@ -92,20 +89,17 @@ export default function DashboardLayout({
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
             {/* Left: logo + contextual text */}
             <div className="flex items-center gap-3 min-w-0">
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 flex-shrink-0"
-              >
+              <Link href="/dashboard" className="flex items-center gap-2 flex-shrink-0">
                 <Image
-                  src="/lustmia-pro-logo.png"
-                  alt="Lustmia Pro"
+                  src="/rankcore-pro-logo.png"
+                  alt="Rankcore.ai"
                   width={28}
                   height={28}
                   priority
                   className="rounded-md"
                 />
                 <span className="hidden sm:inline text-sm font-semibold tracking-wide">
-                  Lustmia Pro
+                  Rankcore.ai
                 </span>
               </Link>
 
@@ -114,19 +108,14 @@ export default function DashboardLayout({
                 {derivedActive === "overview" && "Overview of your backlinks."}
                 {derivedActive === "backlink-explorer" &&
                   "Inspect individual backlinks & anchors."}
-                {derivedActive === "clients" &&
-                  "Manage agency / client workspaces."}
+                {derivedActive === "clients" && "Manage agency / client workspaces."}
                 {derivedActive === "competitors" &&
                   "Compare your authority with competitors."}
                 {derivedActive === "metrics" &&
-                  "Website performance, Core Web Vitals & recommendations."}{" "}
-                {/* ✅ added */}
-                {derivedActive === "toxic-links" &&
-                  "Find and handle spammy / risky links."}
-                {derivedActive === "billing" &&
-                  "Plan, invoices and subscription."}
-                {derivedActive === "settings" &&
-                  "Workspace and account preferences."}
+                  "Website performance, Core Web Vitals & recommendations."}
+                {derivedActive === "toxic-links" && "Find and handle spammy / risky links."}
+                {derivedActive === "billing" && "Plan, invoices and subscription."}
+                {derivedActive === "settings" && "Workspace and account preferences."}
               </div>
             </div>
 
@@ -135,7 +124,6 @@ export default function DashboardLayout({
               <span className="hidden sm:inline text-xs text-white/60">
                 Plan: <span className="uppercase">Free</span>
               </span>
-              {/* This is your "Upgrade" button that leads to Stripe pricing page */}
               <Link
                 href="/pricing"
                 className="px-3 py-2 rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-indigo-500 text-xs font-semibold hover:opacity-90"
@@ -147,9 +135,7 @@ export default function DashboardLayout({
         </header>
 
         {/* PAGE CONTENT */}
-        <main className="max-w-6xl mx-auto w-full px-4 py-6">
-          {children}
-        </main>
+        <main className="max-w-6xl mx-auto w-full px-4 py-6">{children}</main>
       </div>
     </div>
   );

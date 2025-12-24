@@ -3,34 +3,54 @@ import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServer } from "@/lib/supabase/server";
 
-// ✅ reuse your shared quota + subscription logic
-import {
-  computePlanLimit,
-  getSupabaseAdmin as getSupabaseAdminFromLib,
-  getUserSubscription,
-  consumeDailyQuota,
-} from "@/lib/proscanQuota";
+export const runtime = "nodejs";
 
 type ScanRequest = {
   url: string;
-  userId?: string; // ignored for security; kept for compatibility
+  userId?: string; // optional because we can derive from cookie auth
 };
 
 // ONLY this email should be master/admin
 const ADMIN_EMAIL = "sales@lustmia.com";
-
-// For admin we return a huge daily limit so UI never gates
 const ADMIN_DAILY_LIMIT = 999999;
 
 function getSupabaseAdmin() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  if (!supabaseUrl || !serviceKey) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE;
+
+  if (!url || !key) {
+    throw new Error(
+      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY"
+    );
   }
 
-  return createClient(supabaseUrl, serviceKey);
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+const PLAN_LIMITS: Record<string, number> = {
+  free: Number(process.env.PROSCAN_LIMIT_FREE ?? 0),
+  personal: Number(process.env.PROSCAN_LIMIT_PERSONAL ?? 3),
+  business: Number(process.env.PROSCAN_LIMIT_BUSINESS ?? 15),
+  agency: Number(process.env.PROSCAN_LIMIT_AGENCY ?? 40),
+};
+
+function computePlanLimit(planRaw: string | null | undefined, status: string) {
+  const plan = (planRaw || "free").toLowerCase();
+  const isActive = status === "active";
+  if (!isActive || plan === "free") return PLAN_LIMITS.free;
+  return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+}
+
+function nextUtcMidnightISO() {
+  const now = new Date();
+  const resetAt = new Date(now);
+  resetAt.setUTCHours(24, 0, 0, 0);
+  return resetAt.toISOString();
 }
 
 function normalizeUrl(input: string) {
@@ -40,10 +60,6 @@ function normalizeUrl(input: string) {
   return u.toString();
 }
 
-/**
- * Map low-level pro-scan errors into a friendly message
- * that you can show in the UI.
- */
 function mapProScanErrorToMessage(err: any): string {
   const raw = String(err?.message || "").toLowerCase();
 
@@ -82,9 +98,7 @@ async function fetchRenderedHTML(targetUrl: string) {
     body: JSON.stringify({
       url: targetUrl,
       waitUntil: "networkidle2",
-      gotoOptions: {
-        timeout: Number(process.env.SCRAPER_TIMEOUT || 10000),
-      },
+      gotoOptions: { timeout: Number(process.env.SCRAPER_TIMEOUT || 10000) },
     }),
   });
 
@@ -127,40 +141,99 @@ function uniqueRefDomains(links: string[], targetHost: string) {
   return Array.from(domains);
 }
 
+async function reserveDailyToken(params: {
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  limit: number;
+}) {
+  const { supabaseAdmin, userId, limit } = params;
+
+  const now = new Date();
+  const resetAtISO = nextUtcMidnightISO();
+
+  let usedToday = 0;
+
+  const { data: usage } = await supabaseAdmin
+    .from("proscan_usage")
+    .select("used_today, reset_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (usage) {
+    const resetAtDb = usage.reset_at ? new Date(usage.reset_at) : null;
+    if (resetAtDb && resetAtDb > now) usedToday = usage.used_today || 0;
+    else usedToday = 0;
+  }
+
+  await supabaseAdmin.from("proscan_usage").upsert({
+    user_id: userId,
+    used_today: usedToday,
+    limit,
+    reset_at: resetAtISO,
+  });
+
+  const remaining = Math.max(limit - usedToday, 0);
+  if (remaining <= 0) {
+    return {
+      ok: false as const,
+      limit,
+      usedToday,
+      remaining: 0,
+      resetAt: resetAtISO,
+    };
+  }
+
+  await supabaseAdmin.from("proscan_usage").upsert({
+    user_id: userId,
+    used_today: usedToday + 1,
+    limit,
+    reset_at: resetAtISO,
+  });
+
+  return {
+    ok: true as const,
+    limit,
+    usedTodayBefore: usedToday,
+    usedTodayAfter: usedToday + 1,
+    remainingAfter: Math.max(limit - (usedToday + 1), 0),
+    resetAt: resetAtISO,
+  };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as ScanRequest;
+    const body = (await req.json().catch(() => null)) as ScanRequest | null;
 
     if (!body?.url) {
       return NextResponse.json({ error: "Missing url" }, { status: 400 });
     }
 
-    // -----------------------------
-    // AUTH: cookie is source of truth
-    // -----------------------------
     const supabaseAuth = createSupabaseServer();
     const { data: authData } = await supabaseAuth.auth.getUser();
     const authedUser = authData?.user ?? null;
 
-    if (!authedUser) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    }
-
-    const authedEmail = (authedUser.email ?? "").toLowerCase();
+    const authedEmail = (authedUser?.email ?? "").toLowerCase();
     const isAdmin = authedEmail === ADMIN_EMAIL;
-    const userId = authedUser.id;
 
-    // Keep your existing admin client (not removing it)
     const supabaseAdmin = getSupabaseAdmin();
-
-    // ✅ Shared helper admin client too
-    const supabaseAdminLib = getSupabaseAdminFromLib();
 
     const target = normalizeUrl(body.url);
 
+    // Prefer real authed user id when logged in; fallback to body.userId if not
+    const effectiveUserId =
+      isAdmin
+        ? `admin-${ADMIN_EMAIL}`
+        : authedUser?.id || body.userId || null;
+
+    if (!effectiveUserId) {
+      return NextResponse.json(
+        { error: "Missing userId (not authenticated)" },
+        { status: 401 }
+      );
+    }
+
     // -----------------------------
-    // ADMIN SHORT-CIRCUIT:
-    // skip subscription/quota checks and do NOT decrement usage
+    // ADMIN SHORT-CIRCUIT (no quota/subscription)
     // -----------------------------
     if (isAdmin) {
       const html = await fetchRenderedHTML(target);
@@ -182,7 +255,7 @@ export async function POST(req: Request) {
       // Store scan (best effort)
       try {
         await supabaseAdmin.from("proscan_scans").insert({
-          user_id: userId,
+          user_id: effectiveUserId,
           target,
           total_backlinks: result.totalBacklinks,
           ref_domains: result.refDomains,
@@ -190,58 +263,65 @@ export async function POST(req: Request) {
           created_at: new Date().toISOString(),
         });
       } catch {
-        // ignore if table doesn't exist
+        // ignore
       }
 
       return NextResponse.json(result);
     }
 
     // -----------------------------
-    // NORMAL USERS: QUOTA CHECK (plan-based + paid-only)
+    // NORMAL USERS: subscription + quota
     // -----------------------------
-    let remaining: number | null = null;
-    let limit: number | null = null;
-    let resetAt: string | null = null;
+    let plan = "free";
+    let status = "inactive";
 
     try {
-      // 1) subscription
-      const { plan, status } = await getUserSubscription(supabaseAdminLib, userId);
+      const { data: sub } = await supabaseAdmin
+        .from("proscan_subscriptions")
+        .select("plan_id,status")
+        .eq("user_id", effectiveUserId)
+        .maybeSingle();
 
-      // 2) only paid active can run ProScan
-      const isPaidActive = status === "active" && plan !== "free";
-      if (!isPaidActive) {
-        return NextResponse.json(
-          { error: "Upgrade required to run Pro scans." },
-          { status: 402 }
-        );
+      if (sub) {
+        plan = String(sub.plan_id || plan).toLowerCase();
+        status = sub.status || status;
       }
-
-      // 3) per-plan limit
-      limit = computePlanLimit(plan, status);
-
-      // 4) consume quota BEFORE Browserless
-      const q = await consumeDailyQuota(supabaseAdminLib, userId, limit);
-
-      resetAt = q.resetAt ?? null;
-
-      if (!q.ok) {
-        return NextResponse.json(
-          {
-            error: "Daily pro scan limit reached",
-            limit: q.limit,
-            remaining: 0,
-            resetAt: q.resetAt,
-          },
-          { status: 429 }
-        );
-      }
-
-      remaining = q.remaining ?? null;
-      limit = q.limit ?? limit;
     } catch {
+      plan = "free";
+      status = "inactive";
+    }
+
+    const isPaidActive = status === "active" && plan !== "free";
+    if (!isPaidActive) {
       return NextResponse.json(
-        { error: "Usage tracking unavailable. Please contact support." },
-        { status: 503 }
+        { error: "Upgrade required to run Pro scans." },
+        { status: 402 }
+      );
+    }
+
+    const limit = computePlanLimit(plan, status);
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return NextResponse.json(
+        { error: "Pro scan quota is not available for your plan." },
+        { status: 403 }
+      );
+    }
+
+    const reservation = await reserveDailyToken({
+      supabaseAdmin,
+      userId: effectiveUserId,
+      limit,
+    });
+
+    if (!reservation.ok) {
+      return NextResponse.json(
+        {
+          error: "Daily pro scan limit reached",
+          limit: reservation.limit,
+          remaining: 0,
+          resetAt: reservation.resetAt,
+        },
+        { status: 429 }
       );
     }
 
@@ -259,17 +339,17 @@ export async function POST(req: Request) {
       totalBacklinks: outboundLinks.length,
       refDomains: refDomains.length,
       sample: outboundLinks.slice(0, 25),
-      limit,
-      remaining,
-      resetAt,
+      limit: reservation.limit,
+      remaining: reservation.remainingAfter,
+      resetAt: reservation.resetAt,
     };
 
     // -----------------------------
-    // STORE SCAN (if table exists)
+    // STORE SCAN (best-effort)
     // -----------------------------
     try {
       await supabaseAdmin.from("proscan_scans").insert({
-        user_id: userId,
+        user_id: effectiveUserId,
         target,
         total_backlinks: result.totalBacklinks,
         ref_domains: result.refDomains,
@@ -277,7 +357,7 @@ export async function POST(req: Request) {
         created_at: new Date().toISOString(),
       });
     } catch {
-      // ignore if table doesn't exist
+      // ignore
     }
 
     return NextResponse.json(result);
