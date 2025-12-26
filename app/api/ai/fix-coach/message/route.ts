@@ -2,223 +2,220 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+// import your AI client here if you have one, e.g. OpenAI
+// import { openai } from "@/lib/openai";
 
-type MessageRole = "user" | "assistant";
+const ADMIN_EMAILS = ["sales@lustmia.com", "sales@lustmia.com.br"] as const;
 
-type ChatMessage = {
-  role: MessageRole;
-  content: string;
+const PLAN_LIMITS: Record<string, number> = {
+  free: 20,
+  pro: 200,
+  admin: 999999,
 };
 
-type RequestBody = {
-  sessionId?: string | null;
-  question: string;
-  metricsContext?: string | null;
+type MessageCreditsRow = {
+  user_id: string;
+  plan: string;
+  used_messages: number;
+  reset_at: string | null;
 };
 
-function getCurrentPeriod() {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
+function getLimitForPlan(plan: string) {
+  if (plan === "admin") return PLAN_LIMITS.admin;
+  if (plan === "pro") return PLAN_LIMITS.pro;
+  return PLAN_LIMITS.free;
 }
 
-const DEFAULT_PLAN_ID = "free";
-
 export async function POST(req: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnon =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY;
+  try {
+    const { question, siteContext, sessionId } = await req.json().catch(() => ({}));
 
-  if (!supabaseUrl || !supabaseAnon) {
-    return NextResponse.json(
-      { error: "Supabase configuration error." },
-      { status: 500 }
-    );
-  }
-
-  const url = req.nextUrl;
-  const res = NextResponse.next();
-
-  const supabaseAuth = createServerClient(supabaseUrl, supabaseAnon, {
-    cookies: {
-      get(name) {
-        return req.cookies.get(name)?.value;
-      },
-      set(name, value, options) {
-        res.cookies.set({ name, value, ...options });
-      },
-      remove(name, options) {
-        res.cookies.set({ name, value: "", ...options });
-      },
-    },
-  });
-
-  // 1) Auth: must be logged in
-  const {
-    data: { user },
-    error: userError,
-  } = await supabaseAuth.auth.getUser();
-
-  if (userError || !user) {
-    const loginUrl = new URL("/login", url.origin);
-    loginUrl.searchParams.set("next", "/dashboard/metrics");
-    return NextResponse.redirect(loginUrl);
-  }
-
-  const body = (await req.json().catch(() => null)) as RequestBody | null;
-
-  if (!body || !body.question?.trim()) {
-    return NextResponse.json(
-      { error: "Missing question." },
-      { status: 400 }
-    );
-  }
-
-  const question = body.question.trim();
-  const sessionId = body.sessionId || null;
-  const metricsContext = body.metricsContext || null;
-
-  // 🔐 ADMIN BYPASS: sales@lustmia.com(.br) has unlimited AI and NO credits touched
-  const email = user.email?.toLowerCase() || "";
-  const isAdmin =
-    email === "sales@lustmia.com" || email === "sales@lustmia.com.br";
-
-  // Helper to generate the AI answer (stub – replace with real model call)
-  function buildAnswer(q: string, ctx: string | null): string {
-    return [
-      ctx ? `Here’s the issue Rankcore.ai detected:\n${ctx}\n` : "",
-      "Here’s how you can fix this on your own site:",
-      "",
-      "1. Find where this script/CSS is loaded (theme, plugins, or custom code).",
-      "2. Defer or lazy-load anything not needed for the first screen.",
-      "3. Move non-critical CSS into a separate file or load it asynchronously.",
-      "4. Re-run your Rankcore.ai scan to confirm the improvement.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  // If admin, skip ALL credit reads/writes
-  if (isAdmin) {
-    const aiAnswer = buildAnswer(question, metricsContext);
-
-    // You can still optionally write to ai_fix_chat_sessions here if you want
-    // history for admin, but we intentionally do NOT touch user_ai_credits.
-    return NextResponse.json(
-      {
-        ok: true,
-        sessionId: sessionId ?? null,
-        answer: aiAnswer,
-        limit: null,       // no limit for admin
-        used: null,
-        remaining: null,
-        planId: "admin",
-      },
-      { headers: res.headers }
-    );
-  }
-
-  // 2) NON-ADMIN USERS → enforce credits
-  const { start, end } = getCurrentPeriod();
-
-  const { data: creditRows, error: creditError } = await supabaseAdmin
-    .from("user_ai_credits")
-    .select("user_id, plan_id, messages_used, period_start, period_end")
-    .eq("user_id", user.id)
-    .gte("period_start", start)
-    .lt("period_end", end)
-    .limit(1);
-
-  let creditRow = creditRows?.[0] ?? null;
-
-  if (!creditRow && !creditError) {
-    const { data: inserted, error: insertErr } = await supabaseAdmin
-      .from("user_ai_credits")
-      .insert({
-        user_id: user.id,
-        plan_id: DEFAULT_PLAN_ID,
-        messages_used: 0,
-        period_start: start,
-        period_end: end,
-      })
-      .select("*")
-      .single();
-
-    if (insertErr) {
+    if (!question || typeof question !== "string") {
       return NextResponse.json(
-        { error: "Could not initialize AI credits." },
+        { ok: false, error: "Missing question" },
+        { status: 400 }
+      );
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnon =
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnon) {
+      return NextResponse.json(
+        { ok: false, error: "Supabase env vars not configured" },
         { status: 500 }
       );
     }
 
-    creditRow = inserted;
-  }
+    // IMPORTANT: in a route handler we create our own response object,
+    // NOT `NextResponse.next()`.
+    const cookieResponse = new NextResponse();
 
-  const { data: plan, error: planError } = await supabaseAdmin
-    .from("plans")
-    .select("monthly_message_limit")
-    .eq("id", creditRow.plan_id)
-    .single();
+    const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+      cookies: {
+        get(name) {
+          return req.cookies.get(name)?.value;
+        },
+        set(name, value, options) {
+          cookieResponse.cookies.set({ name, value, ...options });
+        },
+        remove(name, options) {
+          cookieResponse.cookies.set({ name, value: "", ...options });
+        },
+      },
+    });
 
-  if (planError || !plan) {
+    // Get current user from Supabase session cookies
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const userId = user?.id ?? `anon:${sessionId || "unknown"}`;
+    const email = (user?.email || "").toLowerCase();
+
+    // ✅ ADMIN users (your email) are never limited
+    const isAdmin =
+      email.length > 0 && ADMIN_EMAILS.includes(email as (typeof ADMIN_EMAILS)[number]);
+
+    let plan = "free";
+
+    // Try to read user's plan from your database (optional, adjust table/columns)
+    if (userId && !userId.startsWith("anon:")) {
+      const { data: billingRow } = await supabaseAdmin
+        .from("billing_subscriptions")
+        .select("plan, status")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (billingRow?.plan === "pro") {
+        plan = "pro";
+      }
+    }
+
+    if (isAdmin) {
+      plan = "admin";
+    }
+
+    const limit = getLimitForPlan(plan);
+
+    // Only enforce limits for non-admin users
+    let used = 0;
+    if (!isAdmin && !userId.startsWith("anon:")) {
+      const { data: creditsRow, error: creditsError } = await supabaseAdmin
+        .from<MessageCreditsRow>("ai_message_credits")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (creditsError) {
+        console.error("[fix-coach] credits fetch error", creditsError);
+      }
+
+      const now = new Date();
+      let resetAt = creditsRow?.reset_at ? new Date(creditsRow.reset_at) : null;
+
+      // monthly reset example – adjust as you like
+      if (!resetAt || resetAt < now) {
+        // reset window: 30 days from now
+        resetAt = new Date();
+        resetAt.setDate(resetAt.getDate() + 30);
+
+        const { data, error } = await supabaseAdmin
+          .from("ai_message_credits")
+          .upsert(
+            {
+              user_id: userId,
+              plan,
+              used_messages: 0,
+              reset_at: resetAt.toISOString(),
+            },
+            { onConflict: "user_id" }
+          )
+          .select("used_messages")
+          .maybeSingle();
+
+        if (!error && data) {
+          used = data.used_messages;
+        }
+      } else {
+        used = creditsRow?.used_messages ?? 0;
+      }
+
+      if (used >= limit) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              plan === "free"
+                ? "Free plan AI message limit reached. Upgrade to keep chatting with Rankcore.ai."
+                : "AI message limit reached for your current plan.",
+            remainingMessages: 0,
+            plan,
+          },
+          { status: 429 }
+        );
+      }
+    }
+
+    // --- Call your AI model here ---
+    // Replace this stub with your actual OpenAI / AI helper call.
+    const fakeReply =
+      "Here’s how to start fixing this issue. First, identify where the unused JavaScript is loaded (for example, third-party widgets or tracking scripts). Then move non-critical scripts to load after user interaction, or remove them if they are not needed.";
+
+    // If not admin/anon, increment usage
+    let remainingMessages = limit;
+    if (!isAdmin && !userId.startsWith("anon:")) {
+      const { data, error } = await supabaseAdmin
+        .from("ai_message_credits")
+        .update({ used_messages: used + 1 })
+        .eq("user_id", userId)
+        .select("used_messages")
+        .maybeSingle();
+
+      if (error) {
+        console.error("[fix-coach] failed to increment usage", error);
+      }
+
+      const newUsed = data?.used_messages ?? used + 1;
+      remainingMessages = Math.max(0, limit - newUsed);
+    }
+
+    // Optionally log the conversation to a separate table
+    if (!userId.startsWith("anon:")) {
+      supabaseAdmin
+        .from("ai_message_logs")
+        .insert({
+          user_id: userId,
+          plan,
+          question,
+          site_context: siteContext ?? null,
+          reply: fakeReply,
+          session_id: sessionId ?? null,
+        })
+        .catch((e) => console.error("[fix-coach] log insert error", e));
+    }
+
+    const headers = new Headers(cookieResponse.headers);
+    headers.set("Content-Type", "application/json");
+
+    return new NextResponse(
+      JSON.stringify({
+        ok: true,
+        reply: fakeReply,
+        remainingMessages,
+        plan,
+        isAdmin,
+      }),
+      { status: 200, headers }
+    );
+  } catch (err: any) {
+    console.error("[fix-coach] unhandled error", err);
     return NextResponse.json(
-      { error: "Could not load plan limits." },
+      { ok: false, error: "Internal error in AI coach route." },
       { status: 500 }
     );
   }
-
-  const limit = plan.monthly_message_limit;
-  const used = creditRow.messages_used ?? 0;
-
-  if (used >= limit) {
-    return NextResponse.json(
-      {
-        error: "You’ve reached your AI assistant limit for this month.",
-        code: "OUT_OF_CREDITS",
-        remaining: 0,
-        limit,
-      },
-      { status: 402 }
-    );
-  }
-
-  // Build answer for non-admin
-  const aiAnswer = buildAnswer(question, metricsContext);
-
-  // (Optional) store conversation – left as a TODO, like before
-
-  const { data: updatedCredits, error: updateErr } = await supabaseAdmin
-    .from("user_ai_credits")
-    .update({
-      messages_used: used + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("user_id", user.id)
-    .eq("period_start", creditRow.period_start)
-    .select("messages_used")
-    .single();
-
-  if (updateErr) {
-    console.error("Failed to increment AI credits", updateErr);
-  }
-
-  const usedAfter = updatedCredits?.messages_used ?? used + 1;
-
-  return NextResponse.json(
-    {
-      ok: true,
-      sessionId,
-      answer: aiAnswer,
-      limit,
-      used: usedAfter,
-      remaining: Math.max(0, limit - usedAfter),
-      planId: creditRow.plan_id,
-    },
-    { headers: res.headers }
-  );
 }
