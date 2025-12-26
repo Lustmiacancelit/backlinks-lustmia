@@ -10,7 +10,7 @@ const ADMIN_EMAILS = ["sales@lustmia.com", "sales@lustmia.com.br"] as const;
 const PLAN_LIMITS: Record<string, number> = {
   free: 20,
   pro: 200,
-  admin: 999999,
+  admin: 999_999,
 };
 
 type MessageCreditsRow = {
@@ -28,7 +28,9 @@ function getLimitForPlan(plan: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { question, siteContext, sessionId } = await req.json().catch(() => ({}));
+    const { question, siteContext, sessionId } = await req
+      .json()
+      .catch(() => ({}));
 
     if (!question || typeof question !== "string") {
       return NextResponse.json(
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // response object to capture cookies written by Supabase
+    // Response object to carry any Set-Cookie coming from @supabase/ssr
     const cookieResponse = new NextResponse();
 
     const supabase = createServerClient(supabaseUrl, supabaseAnon, {
@@ -74,13 +76,14 @@ export async function POST(req: NextRequest) {
     const userId = user?.id ?? `anon:${sessionId || "unknown"}`;
     const email = (user?.email || "").toLowerCase();
 
-    // ✅ ADMIN users (your email) are never limited
+    // ✅ ADMIN users are never limited
     const isAdmin =
-      email.length > 0 && ADMIN_EMAILS.includes(email as (typeof ADMIN_EMAILS)[number]);
+      email.length > 0 &&
+      ADMIN_EMAILS.includes(email as (typeof ADMIN_EMAILS)[number]);
 
-    let plan = "free";
+    let plan: string = "free";
 
-    // Try to read user's plan from your database
+    // Try to read user's plan from your DB (if not anon)
     if (userId && !userId.startsWith("anon:")) {
       const { data: billingRow } = await supabaseAdmin
         .from("billing_subscriptions")
@@ -116,10 +119,10 @@ export async function POST(req: NextRequest) {
       const now = new Date();
       let resetAt = creditsRow?.reset_at ? new Date(creditsRow.reset_at) : null;
 
-      // monthly reset example – adjust as desired
+      // Monthly reset example – adjust as you like
       if (!resetAt || resetAt < now) {
         resetAt = new Date();
-        resetAt.setDate(resetAt.getDate() + 30);
+        resetAt.setDate(resetAt.getDate() + 30); // 30 days window
 
         const { data, error } = await supabaseAdmin
           .from("ai_message_credits")
@@ -180,7 +183,7 @@ export async function POST(req: NextRequest) {
       remainingMessages = Math.max(0, limit - newUsed);
     }
 
-    // ✅ Log conversation without .catch on the builder
+    // Optionally log the conversation to a separate table
     if (!userId.startsWith("anon:")) {
       try {
         await supabaseAdmin.from("ai_message_logs").insert({
