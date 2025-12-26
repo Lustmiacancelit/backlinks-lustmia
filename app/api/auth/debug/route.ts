@@ -1,26 +1,19 @@
-// app/api/auth/debug/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-export async function GET(req: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnon =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnon) {
-    return NextResponse.json(
-      { user: null, error: "Missing Supabase env vars" },
-      { status: 500 }
-    );
-  }
+export async function GET(request: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
   const supabase = createServerClient(supabaseUrl, supabaseAnon, {
     cookies: {
       get(name) {
-        return req.cookies.get(name)?.value;
+        return request.headers
+          .get("cookie")
+          ?.split("; ")
+          .find((c) => c.startsWith(name + "="))
+          ?.split("=")[1];
       },
-      // we’re only *reading* cookies in this debug route, so set/remove can be no-ops
       set() {},
       remove() {},
     },
@@ -28,12 +21,10 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase.auth.getUser();
 
-  return NextResponse.json(
-    {
-      user: data?.user ?? null,
-      error: error?.message ?? null,
-      hasSession: !!data?.user,
-    },
-    { status: 200 }
-  );
+  return NextResponse.json({
+    ok: !error,
+    user: data?.user ?? null,
+    hasSession: !!data?.user,
+    error: error?.message ?? null,
+  });
 }
