@@ -49,8 +49,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // IMPORTANT: in a route handler we create our own response object,
-    // NOT `NextResponse.next()`.
+    // response object to capture cookies written by Supabase
     const cookieResponse = new NextResponse();
 
     const supabase = createServerClient(supabaseUrl, supabaseAnon, {
@@ -81,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     let plan = "free";
 
-    // Try to read user's plan from your database (optional, adjust table/columns)
+    // Try to read user's plan from your database
     if (userId && !userId.startsWith("anon:")) {
       const { data: billingRow } = await supabaseAdmin
         .from("billing_subscriptions")
@@ -101,7 +100,7 @@ export async function POST(req: NextRequest) {
 
     const limit = getLimitForPlan(plan);
 
-    // Only enforce limits for non-admin users
+    // Only enforce limits for non-admin, non-anon users
     let used = 0;
     if (!isAdmin && !userId.startsWith("anon:")) {
       const { data: creditsRow, error: creditsError } = await supabaseAdmin
@@ -117,9 +116,8 @@ export async function POST(req: NextRequest) {
       const now = new Date();
       let resetAt = creditsRow?.reset_at ? new Date(creditsRow.reset_at) : null;
 
-      // monthly reset example – adjust as you like
+      // monthly reset example – adjust as desired
       if (!resetAt || resetAt < now) {
-        // reset window: 30 days from now
         resetAt = new Date();
         resetAt.setDate(resetAt.getDate() + 30);
 
@@ -160,8 +158,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // --- Call your AI model here ---
-    // Replace this stub with your actual OpenAI / AI helper call.
+    // --- Call your AI model here (stub for now) ---
     const fakeReply =
       "Here’s how to start fixing this issue. First, identify where the unused JavaScript is loaded (for example, third-party widgets or tracking scripts). Then move non-critical scripts to load after user interaction, or remove them if they are not needed.";
 
@@ -183,19 +180,20 @@ export async function POST(req: NextRequest) {
       remainingMessages = Math.max(0, limit - newUsed);
     }
 
-    // Optionally log the conversation to a separate table
+    // ✅ Log conversation without .catch on the builder
     if (!userId.startsWith("anon:")) {
-      supabaseAdmin
-        .from("ai_message_logs")
-        .insert({
+      try {
+        await supabaseAdmin.from("ai_message_logs").insert({
           user_id: userId,
           plan,
           question,
           site_context: siteContext ?? null,
           reply: fakeReply,
           session_id: sessionId ?? null,
-        })
-        .catch((e) => console.error("[fix-coach] log insert error", e));
+        });
+      } catch (e) {
+        console.error("[fix-coach] log insert error", e);
+      }
     }
 
     const headers = new Headers(cookieResponse.headers);
