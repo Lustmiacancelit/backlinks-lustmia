@@ -96,7 +96,7 @@ export default function HomePage() {
           >
             <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden border border-white/10">
               <Image
-                src="/rankcore-logo.svg"
+                src="/rankcore-logo.png"
                 alt="Rankcore.ai"
                 width={28}
                 height={28}
@@ -162,79 +162,95 @@ export default function HomePage() {
 
         {/* HERO SECTION */}
         <section className="grid gap-10 md:grid-cols-2 items-center pt-4">
-          {/* left side */}
-          <div className="space-y-5">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-white/80">
-              <Sparkles className="w-3.5 h-3.5 text-fuchsia-300" />
-              New · AI-powered backlink sidekick
-            </div>
-
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold leading-tight">
-              Chat with your{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-300">
-                backlinks
-              </span>
-              .
-            </h1>
-
-            <p className="text-white/70 text-sm sm:text-base max-w-xl">
-              Rankcore.ai watches your backlink profile so you don&apos;t have to.
-              See authority trends, find toxic links, and understand who&apos;s
-              linking to you — all in one clean dashboard.
-            </p>
-
-            {/* Email + CTA */}
-            <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="flex-1 px-4 py-3 rounded-xl bg-black/40 border border-white/15 outline-none text-sm placeholder:text-white/35 focus:border-fuchsia-400"
+          {/* left side: BIG LOGO */}
+          <div className="space-y-6">
+            <div className="flex justify-center md:justify-start">
+              <div className="relative w-[260px] h-[260px] sm:w-[340px] sm:h-[340px] lg:w-[420px] lg:h-[420px]">
+                <Image
+                  src="/rankcore-logo.png"
+                  alt="Rankcore.ai logo"
+                  fill
+                  priority
+                  className="object-contain drop-shadow-[0_0_32px_rgba(56,189,248,0.7)]"
                 />
               </div>
+            </div>
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={handleStartFreeScan}
-                  disabled={status === "sending"}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold disabled:opacity-60"
-                >
-                  {status === "sending"
-                    ? "Sending magic link..."
-                    : "Start free scan"}
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={() =>
-                    document
-                      .getElementById("features")
-                      ?.scrollIntoView({ behavior: "smooth" })
-                  }
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10"
-                >
-                  Watch how it works
-                </button>
+            <div className="space-y-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-white/80">
+                <Sparkles className="w-3.5 h-3.5 text-fuchsia-300" />
+                New · AI-powered backlink sidekick
               </div>
 
-              <p className="text-[11px] text-white/50">
-                We&apos;ll email you a magic link (usually arrives in{" "}
-                <span className="text-white/80 font-medium">30–90 seconds</span>
-                ). No passwords.
+              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold leading-tight">
+                Chat with your{" "}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-300">
+                  backlinks
+                </span>
+                .
+              </h1>
+
+              <p className="text-white/70 text-sm sm:text-base max-w-xl">
+                Rankcore.ai watches your backlink profile so you don&apos;t have
+                to. See authority trends, find toxic links, and understand
+                who&apos;s linking to you — all in one clean dashboard.
               </p>
 
-              {status === "sent" && (
-                <p className="text-[11px] text-emerald-300">
-                  Magic link sent! It usually arrives in 30–90 seconds. Check
-                  Spam/Promotions if you don&apos;t see it.
-                </p>
-              )}
+              {/* Email + CTA */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="flex-1 px-4 py-3 rounded-xl bg-black/40 border border-white/15 outline-none text-sm placeholder:text-white/35 focus:border-fuchsia-400"
+                  />
+                </div>
 
-              {errorMsg && status !== "sent" && (
-                <p className="text-[11px] text-red-300">{errorMsg}</p>
-              )}
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={handleStartFreeScan}
+                    disabled={status === "sending"}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-500 hover:opacity-90 text-sm font-semibold disabled:opacity-60"
+                  >
+                    {status === "sending"
+                      ? "Sending magic link..."
+                      : "Start free scan"}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      document
+                        .getElementById("features")
+                        ?.scrollIntoView({ behavior: "smooth" })
+                    }
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm hover:bg-white/10"
+                  >
+                    Watch how it works
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-white/50">
+                  We&apos;ll email you a magic link (usually arrives in{" "}
+                  <span className="text-white/80 font-medium">
+                    30–90 seconds
+                  </span>
+                  ). No passwords.
+                </p>
+
+                {status === "sent" && (
+                  <p className="text-[11px] text-emerald-300">
+                    Magic link sent! It usually arrives in 30–90 seconds. Check
+                    Spam/Promotions if you don&apos;t see it.
+                  </p>
+                )}
+
+                {errorMsg && status !== "sent" && (
+                  <p className="text-[11px] text-red-300">{errorMsg}</p>
+                )}
+              </div>
             </div>
           </div>
 
