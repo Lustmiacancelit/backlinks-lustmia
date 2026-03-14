@@ -55,7 +55,8 @@ export default function RootLayout({
         {/* Global Header */}
         <header className="sticky top-0 z-50 border-b border-white/10 bg-black/40 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            {/* Logo / Brand */}
+
+            {/* Logo */}
             <Link href="/" className="flex items-center gap-3">
               <div className="h-9 w-9 rounded-xl bg-white/10 ring-1 ring-white/15" />
               <div className="leading-tight">
@@ -64,7 +65,7 @@ export default function RootLayout({
               </div>
             </Link>
 
-            {/* Main Nav */}
+            {/* Navigation */}
             <nav className="hidden items-center gap-6 md:flex">
               <Link href="/features" className="text-white/80 hover:text-white transition">
                 Features
@@ -78,8 +79,9 @@ export default function RootLayout({
               <Link href="/about" className="text-white/80 hover:text-white transition">
                 About
               </Link>
-
-              {/* Added links */}
+              <Link href="/support" className="text-white/80 hover:text-white transition">
+                Support
+              </Link>
               <Link href="/privacy" className="text-white/80 hover:text-white transition">
                 Privacy
               </Link>
