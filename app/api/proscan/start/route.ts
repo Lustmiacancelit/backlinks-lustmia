@@ -208,7 +208,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing url" }, { status: 400 });
     }
 
-    const supabaseAuth = createSupabaseServer();
+    const supabaseAuth = await createSupabaseServer();
     const { data: authData } = await supabaseAuth.auth.getUser();
     const authedUser = authData?.user ?? null;
 

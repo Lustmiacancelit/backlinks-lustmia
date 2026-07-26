@@ -56,14 +56,13 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServerClient(supabaseUrl, supabaseAnon, {
       cookies: {
-        get(name) {
-          return req.cookies.get(name)?.value;
+        getAll() {
+          return req.cookies.getAll();
         },
-        set(name, value, options) {
-          cookieResponse.cookies.set({ name, value, ...options });
-        },
-        remove(name, options) {
-          cookieResponse.cookies.set({ name, value: "", ...options });
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieResponse.cookies.set(name, value, options);
+          });
         },
       },
     });
@@ -106,11 +105,12 @@ export async function POST(req: NextRequest) {
     // Only enforce limits for non-admin, non-anon users
     let used = 0;
     if (!isAdmin && !userId.startsWith("anon:")) {
-      const { data: creditsRow, error: creditsError } = await supabaseAdmin
-        .from<MessageCreditsRow>("ai_message_credits")
+      const { data: creditsData, error: creditsError } = await supabaseAdmin
+        .from("ai_message_credits")
         .select("*")
         .eq("user_id", userId)
         .maybeSingle();
+      const creditsRow = creditsData as MessageCreditsRow | null;
 
       if (creditsError) {
         console.error("[fix-coach] credits fetch error", creditsError);

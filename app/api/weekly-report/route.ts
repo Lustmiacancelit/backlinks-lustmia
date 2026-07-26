@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/sendEmail";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 
 type ToxicSweepSettingsRow = {
   user_id: string;
@@ -93,10 +93,11 @@ export async function POST() {
 
   try {
     // 1) Load all users who have weekly reports enabled
-    const { data: settings, error: settingsError } = await supabaseAdmin
-      .from<ToxicSweepSettingsRow>("toxic_sweep_settings")
+    const { data: settingsData, error: settingsError } = await supabaseAdmin
+      .from("toxic_sweep_settings")
       .select("user_id, email, weekly_reports_enabled")
       .eq("weekly_reports_enabled", true);
+    const settings = settingsData as ToxicSweepSettingsRow[] | null;
 
     if (settingsError) {
       console.error("[weekly-report] Error loading settings rows:", settingsError);
@@ -142,7 +143,7 @@ export async function POST() {
 
       const totalBacklinks = count ?? 0;
 
-      const token = uuidv4();
+      const token = randomUUID();
       const sentAt = new Date().toISOString();
 
       // Your app routes are /dashboard and /dashboard/settings

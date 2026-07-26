@@ -9,7 +9,7 @@ const ALLOWED_TIERS = new Set(["personal", "business", "agency"]);
 function getStripe() {
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) throw new Error("Missing STRIPE_SECRET_KEY");
-  return new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+  return new Stripe(stripeKey, { apiVersion: "2026-06-24.dahlia" });
 }
 
 function getSupabaseAdmin() {

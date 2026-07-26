@@ -49,12 +49,16 @@ export async function sendEmail(
   }
 
   try {
+    const content =
+      html !== undefined
+        ? { html, ...(text !== undefined ? { text } : {}) }
+        : { text: text ?? subject };
+
     const { data, error } = await resend.emails.send({
       from: resendFromEmail,
       to,
       subject,
-      html,
-      text,
+      ...content,
     });
 
     if (error) {

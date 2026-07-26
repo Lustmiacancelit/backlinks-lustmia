@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   const target = (searchParams.get("target") || "").trim();
   if (!target) return NextResponse.json({ error: "Missing target" }, { status: 400 });
 
-  const supabase = createSupabaseServer();
+  const supabase = await createSupabaseServer();
 
   const { data: scan, error: scanErr } = await supabase
     .from("backlinks_scans")

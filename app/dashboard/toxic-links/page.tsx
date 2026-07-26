@@ -43,8 +43,8 @@ function MetricCard({
 
 export default function ToxicLinksPage() {
   // Demo metrics for now (can be wired to real data later)
-  const totalBacklinks = 120;
-  const toxicLinks = 9;
+  const totalBacklinks: number = 120;
+  const toxicLinks: number = 9;
   const toxicPercent =
     totalBacklinks === 0 ? 0 : Math.round((toxicLinks / totalBacklinks) * 100);
   const highRiskDomains = 3;

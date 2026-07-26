@@ -12,7 +12,7 @@ export async function GET(req: Request) {
 
   if (!target) return NextResponse.json({ error: "Missing target" }, { status: 400 });
 
-  const supabase = createSupabaseServer();
+  const supabase = await createSupabaseServer();
 
   const since = new Date();
   since.setDate(since.getDate() - (days + 2));

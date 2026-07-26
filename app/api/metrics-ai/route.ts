@@ -140,7 +140,7 @@ export async function POST(req: Request) {
     }
 
     // Cookie auth is the ONLY source of truth
-    const supabaseAuth = createSupabaseServer();
+    const supabaseAuth = await createSupabaseServer();
     const { data: authData } = await supabaseAuth.auth.getUser();
     const authedUser = authData?.user ?? null;
 

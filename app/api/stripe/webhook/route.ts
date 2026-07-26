@@ -21,7 +21,23 @@ function getStripe() {
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) throw new Error("Missing STRIPE_SECRET_KEY");
 
-  return new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+  return new Stripe(stripeKey, { apiVersion: "2026-06-24.dahlia" });
+}
+
+function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
+  const legacyPeriodEnd = (
+    subscription as Stripe.Subscription & {
+      current_period_end?: number | null;
+    }
+  ).current_period_end;
+  const itemPeriodEnds = subscription.items.data
+    .map((item) => item.current_period_end)
+    .filter((value): value is number => typeof value === "number");
+  const periodEnd =
+    legacyPeriodEnd ??
+    (itemPeriodEnds.length > 0 ? Math.max(...itemPeriodEnds) : null);
+
+  return periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
 }
 
 export async function POST(req: Request) {
@@ -121,9 +137,7 @@ export async function POST(req: Request) {
             stripeSubscriptionId
           );
 
-          const currentPeriodEnd = sub.current_period_end
-            ? new Date(sub.current_period_end * 1000).toISOString()
-            : null;
+          const currentPeriodEnd = getCurrentPeriodEnd(sub);
 
           // 1) keep your subscriptions table updated
           const upsertPayload = {
@@ -169,9 +183,7 @@ export async function POST(req: Request) {
         const stripeCustomerId =
           typeof sub.customer === "string" ? sub.customer : null;
 
-        const currentPeriodEnd = sub.current_period_end
-          ? new Date(sub.current_period_end * 1000).toISOString()
-          : null;
+        const currentPeriodEnd = getCurrentPeriodEnd(sub);
 
         // 1) update proscan_subscriptions
         const upsertPayload = {

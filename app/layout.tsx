@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { BrandMark } from "@/components/BrandMark";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,67 +49,64 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}
+        className={`${geistSans.variable} ${geistMono.variable} bg-white text-black antialiased`}
       >
-        {/* Global Header */}
-        <header className="sticky top-0 z-50 border-b border-white/10 bg-black/40 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <header className="sticky top-0 z-50 border-b border-black/10 bg-white/90 backdrop-blur-xl">
+          <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8">
+            <BrandMark />
 
-            {/* Logo */}
-            <Link href="/" className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-white/10 ring-1 ring-white/15" />
-              <div className="leading-tight">
-                <div className="font-semibold">Rankcore.ai</div>
-                <div className="text-xs text-white/60">Backlink Intelligence</div>
-              </div>
-            </Link>
-
-            {/* Navigation */}
-            <nav className="hidden items-center gap-6 md:flex">
-              <Link href="/features" className="text-white/80 hover:text-white transition">
-                Features
+            <nav className="hidden items-center gap-7 lg:flex">
+              <Link
+                href="/#platform"
+                className="text-sm font-medium text-black/60 transition hover:text-black"
+              >
+                Platform
               </Link>
-              <Link href="/pricing" className="text-white/80 hover:text-white transition">
+              <Link
+                href="/pricing"
+                className="text-sm font-medium text-black/60 transition hover:text-black"
+              >
                 Pricing
               </Link>
-              <Link href="/blog" className="text-white/80 hover:text-white transition">
-                Blog
-              </Link>
-              <Link href="/about" className="text-white/80 hover:text-white transition">
+              <Link
+                href="/about"
+                className="text-sm font-medium text-black/60 transition hover:text-black"
+              >
                 About
               </Link>
-              <Link href="/support" className="text-white/80 hover:text-white transition">
+              <Link
+                href="/blog"
+                className="text-sm font-medium text-black/60 transition hover:text-black"
+              >
+                Resources
+              </Link>
+              <Link
+                href="/support"
+                className="text-sm font-medium text-black/60 transition hover:text-black"
+              >
                 Support
-              </Link>
-              <Link href="/privacy" className="text-white/80 hover:text-white transition">
-                Privacy
-              </Link>
-              <Link href="/terms" className="text-white/80 hover:text-white transition">
-                Terms
               </Link>
             </nav>
 
-            {/* Auth Buttons */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <Link
                 href="/login"
-                className="text-sm text-white/80 hover:text-white transition"
+                className="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-semibold text-black/65 transition hover:bg-black/[0.04] hover:text-black sm:px-4"
               >
                 Sign In
               </Link>
               <Link
-                href="/register"
-                className="rounded-full bg-fuchsia-600 px-4 py-2 text-sm font-medium hover:opacity-90 transition"
+                href="/register?free=1"
+                className="whitespace-nowrap rounded-lg bg-black px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-black/80 sm:px-4"
               >
-                Sign Up
+                Start free
               </Link>
             </div>
           </div>
         </header>
 
-        {/* Page Content */}
         {children}
 
         <SpeedInsights />

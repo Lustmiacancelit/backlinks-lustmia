@@ -435,7 +435,6 @@ export default function Dashboard() {
     if (!result?.target) return;
     loadSiteHealth(result.target);
     loadDecisionDashboard(result.target); // NEW
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result?.target]);
 
   async function consumeProScanIfNeeded(scanMode: Mode) {
@@ -802,7 +801,12 @@ export default function Dashboard() {
                 </div>
                 {linkPieData.length ? (
                   <div className="h-44">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={0}
+                      initialDimension={{ width: 320, height: 176 }}
+                    >
                       <RePieChart>
                         <Pie
                           data={linkPieData}
@@ -1096,7 +1100,12 @@ export default function Dashboard() {
           </div>
 
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minWidth={0}
+              initialDimension={{ width: 800, height: 256 }}
+            >
               <AreaChart data={trendData}>
                 <defs>
                   <linearGradient id="linksGradient" x1="0" y1="0" x2="0" y2="1">

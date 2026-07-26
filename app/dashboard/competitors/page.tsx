@@ -130,7 +130,7 @@ export default function CompetitorsPage() {
 
               <tbody>
                 {competitors.map((c) => {
-                  let toxColor =
+                  const toxColor =
                     c.toxic > 20
                       ? "text-red-300"
                       : c.toxic > 10

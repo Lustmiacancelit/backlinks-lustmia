@@ -140,7 +140,7 @@ function tryGetEmailFromSupabaseCookie(req: Request) {
 export async function GET(req: Request) {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const supabaseAuth = createSupabaseServer();
+    const supabaseAuth = await createSupabaseServer();
     const { searchParams } = new URL(req.url);
 
     // -----------------------------

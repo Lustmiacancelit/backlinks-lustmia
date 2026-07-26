@@ -29,7 +29,10 @@ function ScorePie({ value }: { value: number | null }) {
 
   return (
     <div style={{ width: 120, height: 120, position: "relative" }}>
-      <ResponsiveContainer>
+      <ResponsiveContainer
+        minWidth={0}
+        initialDimension={{ width: 120, height: 120 }}
+      >
         <PieChart>
           <Pie
             data={data}

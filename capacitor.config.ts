@@ -1,13 +1,13 @@
-import { CapacitorConfig } from '@capacitor/core';
+import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: 'com.lustmia.backlinks',
-  appName: 'Lustmia Backlinks',
-  webDir: 'www',  // Just a placeholder folder
+  appId: "com.lustmia.backlinks",
+  appName: "Lustmia Backlinks",
+  webDir: "www",
   server: {
-    url: 'https://backlinks.lustmia.com',
-    cleartext: true
-  }
+    url: "https://rankcore.ai",
+    cleartext: false,
+  },
 };
 
 export default config;
